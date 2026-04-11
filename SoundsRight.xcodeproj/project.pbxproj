@@ -29,6 +29,7 @@
 		D5AC63F406B15231582E3405 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28A81AD561F90496445A68F5 /* Constants.swift */; };
 		D5B7D21768CA351275B1D3AA /* EdgeTTSProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E1DFF79AEE21ACEA5579F62 /* EdgeTTSProtocol.swift */; };
 		E3E67CBDDEE65FE4CE3CF3FC /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 4BAC557B6928EDFA6FDE5C38 /* KeyboardShortcuts */; };
+		E8A82E3D2F8AC55300D87D79 /* SoundOnlyHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8A82E3C2F8AC55300D87D79 /* SoundOnlyHUD.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +55,7 @@
 		B492BD1A286A024CFFB64DFB /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B63A9F73ABE34BF3846C37C3 /* TTSManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSManager.swift; sourceTree = "<group>"; };
 		CB623C7EFF5DAB841D7445B0 /* SoundsRight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SoundsRight.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E8A82E3C2F8AC55300D87D79 /* SoundOnlyHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundOnlyHUD.swift; sourceTree = "<group>"; };
 		EE8F76534077423F8E952BFD /* EdgeTTSService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeTTSService.swift; sourceTree = "<group>"; };
 		F93C803C5763E7E1843B3C4A /* ShortcutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -130,6 +132,7 @@
 				35C748D418071FAE92903236 /* PlaybackControls.swift */,
 				B492BD1A286A024CFFB64DFB /* SettingsView.swift */,
 				3E4BD98EB1D1094328799998 /* TranslationView.swift */,
+				E8A82E3C2F8AC55300D87D79 /* SoundOnlyHUD.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -271,6 +274,7 @@
 				61C4D3619518CEC50DDFF929 /* EdgeTTSService.swift in Sources */,
 				667CEBFEC5DCCBE1E289ECFD /* FallbackTTSService.swift in Sources */,
 				57FB325FC823CFB9E559181A /* FloatingPanel.swift in Sources */,
+				E8A82E3D2F8AC55300D87D79 /* SoundOnlyHUD.swift in Sources */,
 				336885E7EC34D1482D19BAD9 /* KeychainHelper.swift in Sources */,
 				92574F91A6A847048A797BD3 /* KokoroTTSService.swift in Sources */,
 				461A8258C82E47F85E727C23 /* MenuBarView.swift in Sources */,

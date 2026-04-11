@@ -75,9 +75,11 @@ struct SoundOnlyHUD: View {
             .buttonStyle(.plain)
             .help("Dismiss")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(width: 220)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .fixedSize()
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
     }
 
     private var isPlaying: Bool {

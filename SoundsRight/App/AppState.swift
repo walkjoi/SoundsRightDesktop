@@ -43,6 +43,11 @@ final class AppState: ObservableObject {
 
     @AppStorage("autoPlay") var autoPlay: Bool = true
     @AppStorage("playbackRate") var playbackRateRaw: Double = 1.0
+    @AppStorage("activationMode") var activationModeRaw: String = ActivationMode.translation.rawValue
+
+    var activationMode: ActivationMode {
+        ActivationMode(rawValue: activationModeRaw) ?? .translation
+    }
 
     var playbackRate: PlaybackRate {
         PlaybackRate(rawValue: playbackRateRaw) ?? .normal
@@ -57,6 +62,7 @@ final class AppState: ObservableObject {
     // MARK: - Panel Management
 
     private var floatingPanel: FloatingPanel?
+    private var soundOnlyPanel: FloatingPanel?
     private var settingsWindow: NSWindow?
 
     // MARK: - Logger
@@ -89,6 +95,9 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 if case .playing = self.ttsState {
                     self.ttsState = .finished
+                    if self.activationMode == .soundOnly && !self.isLooping {
+                        self.hideSoundOnlyHUD()
+                    }
                 }
             }
         }
@@ -108,6 +117,7 @@ final class AppState: ObservableObject {
         audioPlayer.stop()
         await ttsManager.shutdown()
         hidePanel()
+        soundOnlyPanel?.orderOut(nil)
         logger.info("App shutdown complete")
     }
 
@@ -127,14 +137,19 @@ final class AppState: ObservableObject {
         translationError = nil
         ttsState = .idle
 
-        showPanel()
-
-        async let translationTask: Void = startTranslation()
-        if autoPlay {
-            async let playbackTask: Void = playTTS()
-            _ = await (translationTask, playbackTask)
-        } else {
-            await translationTask
+        switch activationMode {
+        case .translation:
+            showPanel()
+            async let translationTask: Void = startTranslation()
+            if autoPlay {
+                async let playbackTask: Void = playTTS()
+                _ = await (translationTask, playbackTask)
+            } else {
+                await translationTask
+            }
+        case .soundOnly:
+            showSoundOnlyHUD()
+            await playTTS()
         }
     }
 
@@ -310,6 +325,56 @@ final class AppState: ObservableObject {
         logger.info("Dismissing panel and stopping playback")
         stopTTS()
         hidePanel()
+    }
+
+    // MARK: - Sound Only HUD
+
+    private func showSoundOnlyHUD() {
+        if soundOnlyPanel == nil {
+            let panel = FloatingPanel(contentSize: NSSize(width: 180, height: 40), borderless: true)
+            panel.onClose = { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.stopTTS()
+                }
+            }
+            soundOnlyPanel = panel
+        }
+
+        guard let panel = soundOnlyPanel else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let hostingView = NSHostingView(rootView: SoundOnlyHUD(appState: self))
+            panel.contentView = hostingView
+            let size = hostingView.fittingSize
+            panel.setContentSize(size)
+
+            // Position below-right of the cursor, clamped to screen's visible area
+            let mouse = NSEvent.mouseLocation
+            var origin = NSPoint(x: mouse.x + 12, y: mouse.y - size.height - 8)
+            if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+                let visible = screen.visibleFrame
+                origin.x = max(visible.minX + 8, min(origin.x, visible.maxX - size.width - 8))
+                origin.y = max(visible.minY + 8, min(origin.y, visible.maxY - size.height - 8))
+            }
+            panel.setFrameOrigin(origin)
+            panel.orderFront(nil)
+        }
+    }
+
+    /// Called by the HUD's dismiss button.
+    func dismissSoundOnlyHUD() {
+        logger.info("Dismissing sound only HUD")
+        stopTTS()
+        soundOnlyPanel?.orderOut(nil)
+    }
+
+    /// Called automatically when audio finishes in sound-only mode.
+    private func hideSoundOnlyHUD() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            self.soundOnlyPanel?.orderOut(nil)
+        }
     }
 
     // MARK: - Settings Window

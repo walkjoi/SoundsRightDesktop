@@ -75,11 +75,24 @@ struct GeneralSettingsTab: View {
             }
 
             SettingsSection(title: "Preferences") {
+                SettingsRow(label: "Mode") {
+                    Picker("", selection: $appState.activationModeRaw) {
+                        ForEach(ActivationMode.allCases, id: \.rawValue) { mode in
+                            Text(mode.displayName).tag(mode.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
+
                 SettingsRow(label: "Auto-play pronunciation") {
                     Toggle("", isOn: $appState.autoPlay)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
+                        .disabled(appState.activationMode == .soundOnly)
+                        .opacity(appState.activationMode == .soundOnly ? 0.4 : 1)
                 }
 
                 SettingsRow(label: "Launch at Login") {

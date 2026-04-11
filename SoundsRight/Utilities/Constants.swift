@@ -68,6 +68,18 @@ enum PlaybackRate: Double, CaseIterable, Comparable {
     }
 }
 
+enum ActivationMode: String, CaseIterable {
+    case translation = "translation"
+    case soundOnly = "soundOnly"
+
+    var displayName: String {
+        switch self {
+        case .translation: return "Translation"
+        case .soundOnly: return "Sound Only"
+        }
+    }
+}
+
 enum AppConstants {
     static let claudeAPIURL = "https://api.anthropic.com/v1/messages"
     static let claudeModel = "claude-sonnet-4-6"

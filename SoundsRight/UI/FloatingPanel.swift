@@ -3,34 +3,42 @@ import AppKit
 final class FloatingPanel: NSPanel, NSWindowDelegate {
     var onClose: (() -> Void)?
 
-    init() {
+    init(contentSize: NSSize = NSSize(width: 460, height: 200), borderless: Bool = false) {
+        let styleMask: NSWindow.StyleMask = borderless
+            ? [.nonactivatingPanel, .borderless]
+            : [.nonactivatingPanel, .titled, .closable, .fullSizeContentView]
+
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 200),
-            styleMask: [.nonactivatingPanel, .titled, .closable, .fullSizeContentView],
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: styleMask,
             backing: .buffered,
             defer: false
         )
 
         self.level = .floating
         self.isMovableByWindowBackground = true
-        self.titlebarAppearsTransparent = true
-        self.titleVisibility = .hidden
-        self.isOpaque = true
+        self.isOpaque = !borderless
+        self.backgroundColor = borderless ? .clear : .windowBackgroundColor
         self.hasShadow = true
         self.hidesOnDeactivate = false
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         self.isReleasedWhenClosed = false
         self.delegate = self
 
-        // Vibrancy background
-        let effect = NSVisualEffectView()
-        effect.material = .windowBackground
-        effect.blendingMode = .withinWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
-        effect.layer?.masksToBounds = true
-        self.contentView = effect
+        if !borderless {
+            self.titlebarAppearsTransparent = true
+            self.titleVisibility = .hidden
+
+            // Vibrancy background for the titled translation panel
+            let effect = NSVisualEffectView()
+            effect.material = .windowBackground
+            effect.blendingMode = .withinWindow
+            effect.state = .active
+            effect.wantsLayer = true
+            effect.layer?.cornerRadius = 14
+            effect.layer?.masksToBounds = true
+            self.contentView = effect
+        }
     }
 
     @available(*, unavailable)
