@@ -40,3 +40,12 @@ env/
 .env
 .env.local
 Scripts/kokoro_server_env/
+
+# XcodeGen — generated, do not commit
+*.xcodeproj/
+
+# Claude Code local config
+.claude/
+
+# Build products
+SoundsRight/Products/
