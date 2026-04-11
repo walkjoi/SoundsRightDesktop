@@ -1,6 +1,8 @@
 import AppKit
 
-final class FloatingPanel: NSPanel {
+final class FloatingPanel: NSPanel, NSWindowDelegate {
+    var onClose: (() -> Void)?
+
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 200),
@@ -18,6 +20,7 @@ final class FloatingPanel: NSPanel {
         self.hidesOnDeactivate = false
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         self.isReleasedWhenClosed = false
+        self.delegate = self
 
         // Vibrancy background
         let effect = NSVisualEffectView()
@@ -37,5 +40,9 @@ final class FloatingPanel: NSPanel {
 
     override func cancelOperation(_ sender: Any?) {
         self.orderOut(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
     }
 }

@@ -275,7 +275,13 @@ final class AppState: ObservableObject {
         logger.debug("Showing floating panel")
 
         if floatingPanel == nil {
-            floatingPanel = FloatingPanel()
+            let panel = FloatingPanel()
+            panel.onClose = { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.stopTTS()
+                }
+            }
+            floatingPanel = panel
         }
 
         guard let panel = floatingPanel else {

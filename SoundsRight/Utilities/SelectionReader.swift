@@ -7,6 +7,7 @@ struct SelectionReader {
 
     /// Reads the currently selected text by simulating Cmd+C and checking if the clipboard changed.
     /// Returns nil if no text is selected or Accessibility permission is not granted.
+    @MainActor
     static func readSelectedText() async -> String? {
         guard AXIsProcessTrusted() else {
             logger.warning("Accessibility permission not granted — cannot read selection")
