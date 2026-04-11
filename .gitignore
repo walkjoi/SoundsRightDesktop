@@ -1,0 +1,42 @@
+# Xcode
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcworkspace
+xcuserdata/
+*.xcodeproj/xcshareddata/
+DerivedData/
+*.swiftpm/xcode/package.xcworkspace/
+.swiftpm/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*~.nib
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Project-specific
+.env
+.env.local
+Scripts/kokoro_server_env/

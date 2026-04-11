@@ -1,0 +1,64 @@
+name: SoundsRight
+
+options:
+  bundleIdPrefix: com.soundsright
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts.git
+    from: "2.0.0"
+
+targets:
+  SoundsRight:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+
+    sources:
+      - path: SoundsRight
+        excludes:
+          - "**/*.pbxproj"
+
+    resources:
+      - path: SoundsRight/Resources
+
+    infoPlist:
+      path: SoundsRight/Info.plist
+
+    entitlements:
+      path: SoundsRight/SoundsRight.entitlements
+
+    dependencies:
+      - package: KeyboardShortcuts
+
+    settings:
+      SWIFT_VERSION: "5.9"
+      SWIFT_STRICT_CONCURRENCY: complete
+      INFOPLIST_KEY_LSUIElement: YES
+      PRODUCT_BUNDLE_IDENTIFIER: com.soundsright.desktop
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      CODE_SIGN_IDENTITY: "Apple Development"
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: ""
+      IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+      SDKROOT: macosx
+      SUPPORTED_PLATFORMS: "macosx"
+      TARGETED_DEVICE_FAMILY: "1,2"
+      VALID_ARCHS: "x86_64 arm64"
+
+schemes:
+  SoundsRight:
+    build:
+      targets:
+        SoundsRight: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
