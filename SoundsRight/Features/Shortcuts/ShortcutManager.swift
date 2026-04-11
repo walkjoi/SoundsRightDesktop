@@ -4,7 +4,7 @@ import KeyboardShortcuts
 extension KeyboardShortcuts.Name {
     static let translateClipboard = Self(
         "translateClipboard",
-        default: .init(.d, modifiers: [.command, .shift])
+        default: .init(.z, modifiers: [.option])
     )
 }
 
