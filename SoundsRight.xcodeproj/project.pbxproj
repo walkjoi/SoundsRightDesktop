@@ -8,8 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		03A69935E2ADD3327DF06378 /* ShortcutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F93C803C5763E7E1843B3C4A /* ShortcutManager.swift */; };
-		13B3CD515CB602305E12F6D6 /* ClipboardMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F12F753773DB87B7D6DF2D43 /* ClipboardMonitor.swift */; };
 		140CCBF155FB990729595F4D /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332EDDD0D432535696014B1E /* AppState.swift */; };
+		181F081B2999DD08478C5EE4 /* SelectionReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CE1CA8884D24EA718D049D5 /* SelectionReader.swift */; };
 		2001E062F4D2CAB0F2C63C35 /* TranslationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220374EB430F14C6012235E /* TranslationService.swift */; };
 		336885E7EC34D1482D19BAD9 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9750446BD6BCBFB56F675E00 /* KeychainHelper.swift */; };
 		4470B4770E0D86B4909C925E /* TTSManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63A9F73ABE34BF3846C37C3 /* TTSManager.swift */; };
@@ -43,6 +43,7 @@
 		5B226400EA869D608B9FED84 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
 		5C92101A00909CFBBBF12B2B /* KokoroTTSService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroTTSService.swift; sourceTree = "<group>"; };
 		665F205D35ECDB188DC5A097 /* SoundsRight.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SoundsRight.entitlements; sourceTree = "<group>"; };
+		6CE1CA8884D24EA718D049D5 /* SelectionReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionReader.swift; sourceTree = "<group>"; };
 		759C8EB119C4848086C0A99C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		83A048F0084128CEE13B9303 /* FloatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanel.swift; sourceTree = "<group>"; };
 		85CAE310F4FFC66C72E30325 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -54,7 +55,6 @@
 		B63A9F73ABE34BF3846C37C3 /* TTSManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSManager.swift; sourceTree = "<group>"; };
 		CB623C7EFF5DAB841D7445B0 /* SoundsRight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SoundsRight.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE8F76534077423F8E952BFD /* EdgeTTSService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeTTSService.swift; sourceTree = "<group>"; };
-		F12F753773DB87B7D6DF2D43 /* ClipboardMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardMonitor.swift; sourceTree = "<group>"; };
 		F93C803C5763E7E1843B3C4A /* ShortcutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -150,9 +150,9 @@
 			isa = PBXGroup;
 			children = (
 				A43CD05D032C5B8D20E4D44A /* AudioCache.swift */,
-				F12F753773DB87B7D6DF2D43 /* ClipboardMonitor.swift */,
 				28A81AD561F90496445A68F5 /* Constants.swift */,
 				9750446BD6BCBFB56F675E00 /* KeychainHelper.swift */,
+				6CE1CA8884D24EA718D049D5 /* SelectionReader.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -218,7 +218,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 2640;
+				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					E7B88D0A80DBB5FE6CB38D9F = {
 						ProvisioningStyle = Automatic;
@@ -266,7 +266,6 @@
 				140CCBF155FB990729595F4D /* AppState.swift in Sources */,
 				63106F9349A0E78A5B081221 /* AudioCache.swift in Sources */,
 				8FAC32BA6B4CB0AF141D2B36 /* AudioPlayer.swift in Sources */,
-				13B3CD515CB602305E12F6D6 /* ClipboardMonitor.swift in Sources */,
 				D5AC63F406B15231582E3405 /* Constants.swift in Sources */,
 				D5B7D21768CA351275B1D3AA /* EdgeTTSProtocol.swift in Sources */,
 				61C4D3619518CEC50DDFF929 /* EdgeTTSService.swift in Sources */,
@@ -276,6 +275,7 @@
 				92574F91A6A847048A797BD3 /* KokoroTTSService.swift in Sources */,
 				461A8258C82E47F85E727C23 /* MenuBarView.swift in Sources */,
 				AAF03A721ACFF63DD7A65AA8 /* PlaybackControls.swift in Sources */,
+				181F081B2999DD08478C5EE4 /* SelectionReader.swift in Sources */,
 				71E6157E9684CDF950DAEEB6 /* SettingsView.swift in Sources */,
 				03A69935E2ADD3327DF06378 /* ShortcutManager.swift in Sources */,
 				BD5A9625903B586BAFA7B35F /* SoundsRightApp.swift in Sources */,
@@ -295,11 +295,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = SoundsRight/SoundsRight.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				DEVELOPMENT_TEAM = 3WKH8SN8SD;
 				INFOPLIST_FILE = SoundsRight/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
@@ -352,12 +350,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 3WKH8SN8SD;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -371,7 +366,6 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -384,11 +378,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = SoundsRight/SoundsRight.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				DEVELOPMENT_TEAM = 3WKH8SN8SD;
 				INFOPLIST_FILE = SoundsRight/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
@@ -441,12 +433,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 3WKH8SN8SD;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -467,7 +456,6 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;

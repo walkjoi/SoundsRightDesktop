@@ -78,6 +78,8 @@ final class AppState: ObservableObject {
     func initialize() async {
         logger.info("Initializing app state")
 
+        SelectionReader.ensureAccessibilityPermission()
+
         await ttsManager.initialize()
         logger.info("TTS manager initialized")
 
@@ -115,13 +117,12 @@ final class AppState: ObservableObject {
     func activate() async {
         logger.info("Activate triggered")
 
-        guard let clipboardText = ClipboardMonitor.readText() else {
-            lastError = "No text in clipboard"
-            logger.warning("Clipboard is empty")
+        guard let selectedText = await SelectionReader.readSelectedText() else {
+            logger.info("No text selected — ignoring activation")
             return
         }
 
-        currentText = clipboardText
+        currentText = selectedText
         translation = nil
         translationError = nil
         ttsState = .idle

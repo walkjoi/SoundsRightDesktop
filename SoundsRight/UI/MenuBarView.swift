@@ -5,14 +5,6 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MenuRow(icon: "text.quote", label: "Translate Clipboard") {
-                Task { await appState.activate() }
-            }
-
-            Divider()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 2)
-
             MenuRow(
                 icon: "speaker.wave.2",
                 label: "Auto-play: \(appState.autoPlay ? "On" : "Off")"
