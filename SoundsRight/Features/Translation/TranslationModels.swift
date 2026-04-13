@@ -11,7 +11,7 @@ enum TranslationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            return "Translation requires macOS 14 (Sonoma) or later."
+            return "Translation requires macOS 15 (Sequoia) or later."
         case .failed(let message):
             return message
         }
