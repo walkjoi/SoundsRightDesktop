@@ -134,6 +134,13 @@ final class AppState: ObservableObject {
         logger.info("Activate triggered with mode: \(mode.rawValue)")
         lastActivationMode = mode
 
+        // Clean up any active state from the previous activation
+        isLooping = false
+        audioPlayer.stop()
+        floatingPanel?.orderOut(nil)
+        isPanelVisible = false
+        soundOnlyPanel?.orderOut(nil)
+
         guard let selectedText = await SelectionReader.readSelectedText() else {
             logger.info("No text selected — ignoring activation")
             return
