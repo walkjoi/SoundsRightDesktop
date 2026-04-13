@@ -60,6 +60,7 @@ final class AppState: ObservableObject {
     private var settingsWindow: NSWindow?
     private var isInitialized = false
     private var lastActivationMode: ActivationMode = .translation
+    private var hideSoundOnlyTask: Task<Void, Never>?
 
     // MARK: - Logger
 
@@ -136,7 +137,9 @@ final class AppState: ObservableObject {
 
         // Clean up any active state from the previous activation
         isLooping = false
-        audioPlayer.stop()
+        hideSoundOnlyTask?.cancel()
+        hideSoundOnlyTask = nil
+        audioPlayer.reset()
         floatingPanel?.orderOut(nil)
         isPanelVisible = false
         soundOnlyPanel?.orderOut(nil)
@@ -385,9 +388,11 @@ final class AppState: ObservableObject {
 
     /// Called automatically when audio finishes in sound-only mode.
     private func hideSoundOnlyHUD() {
-        Task { @MainActor in
+        hideSoundOnlyTask?.cancel()
+        hideSoundOnlyTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
-            self.soundOnlyPanel?.orderOut(nil)
+            guard !Task.isCancelled else { return }
+            self?.soundOnlyPanel?.orderOut(nil)
         }
     }
 

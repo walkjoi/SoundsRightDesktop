@@ -66,8 +66,7 @@ actor TTSManager {
             logger.warning("Edge TTS synthesis failed: \(error.localizedDescription)")
         }
 
-        let fallbackRate = mapRateToFloat(rate)
-        await fallbackTTS.speakAsync(text: text, rate: fallbackRate)
+        await fallbackTTS.speakAsync(text: text, rate: Float(rate.rawValue))
         logger.info("Fallback TTS playback succeeded")
         return .fallbackUsed
     }
@@ -76,15 +75,5 @@ actor TTSManager {
         logger.info("Shutting down TTS manager")
         await kokoro.stopServer()
         fallbackTTS.stop()
-    }
-
-    private func mapRateToFloat(_ rate: PlaybackRate) -> Float {
-        // AVSpeechSynthesizer rate: 0.0 (slowest) to 1.0 (fastest), 0.5 is normal
-        switch rate {
-        case .slow: return 0.35
-        case .moderate: return 0.42
-        case .normal: return 0.5
-        case .fast: return 0.57
-        }
     }
 }

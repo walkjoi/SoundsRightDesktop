@@ -74,6 +74,12 @@ class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
         stopProgressTimer()
     }
 
+    /// Stops playback and clears cached audio data so stale audio cannot be replayed.
+    func reset() {
+        stop()
+        lastAudioData = nil
+    }
+
     func togglePlayPause() {
         if isPlaying {
             pause()

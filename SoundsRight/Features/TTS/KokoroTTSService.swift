@@ -76,16 +76,8 @@ actor KokoroTTSService {
     func synthesize(text: String, speed: Double, voice: String = "af_heart") async throws -> Data {
         let request = buildSynthesisRequest(text: text, speed: speed, voice: voice)
 
-        let task = session.dataTask(with: request)
-        let timeoutTask = Task {
-            try await Task.sleep(nanoseconds: 10_000_000_000)
-            throw KokoroError.synthesisTimedOut
-        }
-
         do {
             let (data, response) = try await session.data(for: request)
-
-            timeoutTask.cancel()
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw KokoroError.synthesisError("Invalid response")
