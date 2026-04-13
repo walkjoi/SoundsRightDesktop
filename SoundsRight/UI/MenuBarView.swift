@@ -33,9 +33,6 @@ struct MenuBarView: View {
         }
         .padding(.vertical, 4)
         .frame(width: 220)
-        .task {
-            await appState.initialize()
-        }
     }
 
     private func quit() {

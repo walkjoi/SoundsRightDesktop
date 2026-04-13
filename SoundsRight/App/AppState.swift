@@ -64,6 +64,7 @@ final class AppState: ObservableObject {
     private var floatingPanel: FloatingPanel?
     private var soundOnlyPanel: FloatingPanel?
     private var settingsWindow: NSWindow?
+    private var isInitialized = false
 
     // MARK: - Logger
 
@@ -82,6 +83,9 @@ final class AppState: ObservableObject {
     // MARK: - Lifecycle
 
     func initialize() async {
+        guard !isInitialized else { return }
+        isInitialized = true
+
         logger.info("Initializing app state")
 
         SelectionReader.ensureAccessibilityPermission()

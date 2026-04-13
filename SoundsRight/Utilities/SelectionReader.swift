@@ -29,16 +29,12 @@ struct SelectionReader {
         keyDown.post(tap: CGEventTapLocation.cghidEventTap)
         keyUp.post(tap: CGEventTapLocation.cghidEventTap)
 
-        // Wait for the target app to process the copy command
-        try? await Task.sleep(nanoseconds: 50_000_000)
-
-        // If the clipboard didn't change, nothing was selected
-        guard pasteboard.changeCount != oldChangeCount else {
-            logger.debug("Clipboard unchanged after Cmd+C — no text selected")
-            return nil
-        }
-
-        guard let text = pasteboard.string(forType: .string) else {
+        guard let text = await waitForCopiedText(
+            on: pasteboard,
+            after: oldChangeCount,
+            timeoutNanoseconds: 500_000_000
+        ) else {
+            logger.debug("Clipboard unchanged after Cmd+C within timeout — no text selected")
             return nil
         }
 
@@ -46,6 +42,26 @@ struct SelectionReader {
         guard !trimmed.isEmpty else { return nil }
 
         return String(trimmed.prefix(AppConstants.maxInputLength))
+    }
+
+    @MainActor
+    private static func waitForCopiedText(
+        on pasteboard: NSPasteboard,
+        after oldChangeCount: Int,
+        timeoutNanoseconds: UInt64
+    ) async -> String? {
+        let pollIntervalNanoseconds: UInt64 = 25_000_000
+        let deadline = ContinuousClock.now + .nanoseconds(Int(timeoutNanoseconds))
+
+        while ContinuousClock.now < deadline {
+            if pasteboard.changeCount != oldChangeCount {
+                return pasteboard.string(forType: .string)
+            }
+
+            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+        }
+
+        return nil
     }
 
     static func ensureAccessibilityPermission() {
