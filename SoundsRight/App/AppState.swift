@@ -43,12 +43,6 @@ final class AppState: ObservableObject {
 
     @AppStorage("autoPlay") var autoPlay: Bool = true
     @AppStorage("playbackRate") var playbackRateRaw: Double = 1.0
-    @AppStorage("activationMode") var activationModeRaw: String = ActivationMode.translation.rawValue
-
-    var activationMode: ActivationMode {
-        ActivationMode(rawValue: activationModeRaw) ?? .translation
-    }
-
     var playbackRate: PlaybackRate {
         PlaybackRate(rawValue: playbackRateRaw) ?? .normal
     }
@@ -65,6 +59,7 @@ final class AppState: ObservableObject {
     private var soundOnlyPanel: FloatingPanel?
     private var settingsWindow: NSWindow?
     private var isInitialized = false
+    private var lastActivationMode: ActivationMode = .translation
 
     // MARK: - Logger
 
@@ -99,20 +94,27 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 if case .playing = self.ttsState {
                     self.ttsState = .finished
-                    if self.activationMode == .soundOnly && !self.isLooping {
+                    if self.lastActivationMode == .soundOnly && !self.isLooping {
                         self.hideSoundOnlyHUD()
                     }
                 }
             }
         }
 
-        shortcutManager.register { [weak self] in
-            Task { @MainActor in
-                await self?.activate()
+        shortcutManager.register(
+            onTranslate: { [weak self] in
+                Task { @MainActor in
+                    await self?.activate(mode: .translation)
+                }
+            },
+            onSoundOnly: { [weak self] in
+                Task { @MainActor in
+                    await self?.activate(mode: .soundOnly)
+                }
             }
-        }
+        )
 
-        logger.info("Keyboard shortcut registered")
+        logger.info("Keyboard shortcuts registered")
     }
 
     func shutdown() async {
@@ -128,8 +130,9 @@ final class AppState: ObservableObject {
     // MARK: - Core Actions
 
     @MainActor
-    func activate() async {
-        logger.info("Activate triggered")
+    func activate(mode: ActivationMode) async {
+        logger.info("Activate triggered with mode: \(mode.rawValue)")
+        lastActivationMode = mode
 
         guard let selectedText = await SelectionReader.readSelectedText() else {
             logger.info("No text selected — ignoring activation")
@@ -141,7 +144,7 @@ final class AppState: ObservableObject {
         translationError = nil
         ttsState = .idle
 
-        switch activationMode {
+        switch mode {
         case .translation:
             showPanel()
             async let translationTask: Void = startTranslation()

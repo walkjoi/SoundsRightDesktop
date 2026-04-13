@@ -4,20 +4,30 @@ import KeyboardShortcuts
 extension KeyboardShortcuts.Name {
     static let translateClipboard = Self(
         "translateClipboard",
-        default: .init(.z, modifiers: [.option])
+        default: .init(.x, modifiers: [.command, .option])
+    )
+    static let soundOnlyClipboard = Self(
+        "soundOnlyClipboard",
+        default: .init(.z, modifiers: [.command, .option])
     )
 }
 
 final class ShortcutManager: ObservableObject {
     @Published var isRegistered: Bool = false
 
-    private var onTrigger: (() -> Void)?
+    private var onTranslate: (() -> Void)?
+    private var onSoundOnly: (() -> Void)?
 
-    func register(action: @escaping () -> Void) {
-        onTrigger = action
+    func register(onTranslate: @escaping () -> Void, onSoundOnly: @escaping () -> Void) {
+        self.onTranslate = onTranslate
+        self.onSoundOnly = onSoundOnly
 
         KeyboardShortcuts.onKeyUp(for: .translateClipboard) { [weak self] in
-            self?.onTrigger?()
+            self?.onTranslate?()
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .soundOnlyClipboard) { [weak self] in
+            self?.onSoundOnly?()
         }
 
         isRegistered = true
@@ -25,7 +35,9 @@ final class ShortcutManager: ObservableObject {
 
     func unregister() {
         KeyboardShortcuts.disable(.translateClipboard)
-        onTrigger = nil
+        KeyboardShortcuts.disable(.soundOnlyClipboard)
+        onTranslate = nil
+        onSoundOnly = nil
         isRegistered = false
     }
 }
