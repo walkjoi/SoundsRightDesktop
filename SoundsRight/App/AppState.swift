@@ -25,6 +25,7 @@ final class AppState: ObservableObject {
 
     @Published var currentText: String = ""
     @Published var translation: TranslationResult?
+    @Published var dictionaryResult: DictionaryResult?
     @Published var isTranslating: Bool = false
     @Published var translationError: String?
 
@@ -50,6 +51,7 @@ final class AppState: ObservableObject {
     // MARK: - Services
 
     private let ttsManager = TTSManager()
+    private let translationService = TranslationService()
     let audioPlayer = AudioPlayer()
     let shortcutManager = ShortcutManager()
 
@@ -65,6 +67,10 @@ final class AppState: ObservableObject {
     // MARK: - Logger
 
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "AppState")
+
+    private var isSingleWordSelection: Bool {
+        currentText.split(whereSeparator: \.isWhitespace).count == 1
+    }
 
     // MARK: - Initialization
 
@@ -151,6 +157,7 @@ final class AppState: ObservableObject {
 
         currentText = selectedText
         translation = nil
+        dictionaryResult = nil
         translationError = nil
         ttsState = .idle
 
@@ -175,13 +182,32 @@ final class AppState: ObservableObject {
     private func startTranslation() async {
         guard !currentText.isEmpty else { return }
 
+        isTranslating = true
+        translationError = nil
+        translation = nil
+        dictionaryResult = nil
+
+        if let word = await translationService.dictionaryLookupCandidate(from: currentText) {
+            do {
+                let result = try await translationService.lookupDictionaryEntry(for: word)
+                dictionaryResult = result
+                isTranslating = false
+                resizePanelToFitContent()
+                logger.info("Dictionary lookup succeeded")
+            } catch {
+                translationError = error.localizedDescription
+                isTranslating = false
+                resizePanelToFitContent()
+                logger.error("Dictionary lookup failed: \(error.localizedDescription)")
+            }
+            return
+        }
+
         if #available(macOS 15, *) {
             // Kick off the translation task in TranslationView by incrementing the trigger.
-            isTranslating = true
-            translationError = nil
-            translation = nil
             translationTrigger += 1
         } else {
+            isTranslating = false
             translationError = "Translation requires macOS 15 (Sequoia) or later."
         }
     }
@@ -325,10 +351,31 @@ final class AppState: ObservableObject {
 
         DispatchQueue.main.async {
             let panelContent = TranslationView(appState: self)
-            panel.contentView = NSHostingView(rootView: panelContent)
+            let hostingController = NSHostingController(rootView: panelContent)
+            panel.contentViewController = hostingController
+            panel.setContentSize(NSSize(width: 420, height: 180))
             panel.center()
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func resizePanelToFitContent() {
+        guard let panel = floatingPanel,
+              let hostingController = panel.contentViewController as? NSHostingController<TranslationView>,
+              isSingleWordSelection
+        else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            let targetWidth: CGFloat = 560
+            let fittedSize = hostingController.sizeThatFits(in: NSSize(width: targetWidth, height: .greatestFiniteMagnitude))
+            let contentSize = NSSize(
+                width: max(420, min(fittedSize.width, targetWidth)),
+                height: max(170, fittedSize.height)
+            )
+            panel.setContentSize(contentSize)
         }
     }
 

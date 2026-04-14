@@ -4,6 +4,18 @@ struct TranslationResult: Sendable {
     let translated: String
 }
 
+struct DictionaryResult: Sendable {
+    let word: String
+    let phonetics: [String]
+    let meanings: [DictionaryMeaning]
+}
+
+struct DictionaryMeaning: Sendable, Identifiable {
+    let id = UUID()
+    let partOfSpeech: String
+    let definition: String
+}
+
 enum TranslationError: LocalizedError {
     case unavailable
     case failed(String)

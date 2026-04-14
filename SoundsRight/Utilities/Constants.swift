@@ -84,6 +84,7 @@ enum AppConstants {
     static let claudeAPIURL = "https://api.anthropic.com/v1/messages"
     static let claudeModel = "claude-sonnet-4-6"
     static let claudeAPIVersion = "2023-06-01"
+    static let dictionaryAPIBaseURL = "https://api.dictionaryapi.dev/api/v2/entries/en/"
     static let edgeTTSEndpoint = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
     static let kokoroServerURL = "http://127.0.0.1:18923/tts"
     static let maxInputLength = 1000
