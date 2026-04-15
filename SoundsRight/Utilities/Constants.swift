@@ -30,10 +30,6 @@ enum PlaybackRate: Double, CaseIterable, Comparable, Identifiable {
         return percentage >= 0 ? "+\(percentage)%" : "\(percentage)%"
     }
 
-    var kokoroSpeed: Double {
-        self.rawValue
-    }
-
     var displayLabel: String {
         switch self {
         case .slow:
@@ -92,7 +88,6 @@ enum AppConstants {
     static let claudeAPIVersion = "2023-06-01"
     static let dictionaryAPIBaseURL = "https://api.dictionaryapi.dev/api/v2/entries/en/"
     static let edgeTTSEndpoint = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
-    static let kokoroServerURL = "http://127.0.0.1:18923/tts"
     static let maxInputLength = 1000
     static let audioCacheMaxEntries = 20
     static let keychainService = "SoundsRightDesktop"

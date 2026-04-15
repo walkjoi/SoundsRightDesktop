@@ -49,13 +49,38 @@ targets:
       TARGETED_DEVICE_FAMILY: "1,2"
       VALID_ARCHS: "x86_64 arm64"
 
+  SoundsRightTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "13.0"
+
+    sources:
+      - path: SoundsRightTests
+
+    dependencies:
+      - target: SoundsRight
+
+    settings:
+      SWIFT_VERSION: "5.9"
+      SWIFT_STRICT_CONCURRENCY: complete
+      PRODUCT_BUNDLE_IDENTIFIER: com.soundsright.desktop.tests
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      CODE_SIGN_IDENTITY: ""
+      CODE_SIGNING_REQUIRED: NO
+      CODE_SIGNING_ALLOWED: NO
+
 schemes:
   SoundsRight:
     build:
       targets:
         SoundsRight: all
+        SoundsRightTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - SoundsRightTests
     profile:
       config: Release
     analyze:

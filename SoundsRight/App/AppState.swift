@@ -109,9 +109,6 @@ final class AppState: ObservableObject {
 
         SelectionReader.ensureAccessibilityPermission()
 
-        await ttsManager.initialize()
-        logger.info("TTS manager initialized")
-
         // Update ttsState when audio finishes playing naturally
         audioPlayer.onFinished = { [weak self] in
             Task { @MainActor [weak self] in

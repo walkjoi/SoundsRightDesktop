@@ -12,9 +12,6 @@ xcodegen generate
 
 # Build from command line
 xcodebuild -scheme SoundsRight -configuration Debug build
-
-# Run the Kokoro TTS server (optional, for local high-quality TTS)
-cd Scripts && python3 kokoro_server.py
 ```
 
 No test suite exists yet. When adding tests, use XCTest and place them in a `SoundsRightTests/` target.
@@ -29,9 +26,8 @@ Key data flow: clipboard text -> Apple Translation (macOS 15+) -> TTS synthesis 
 
 `TTSManager` (an actor) tries providers in order:
 1. **AudioCache** -- returns cached audio if available
-2. **KokoroTTSService** -- local Kokoro-82M server (`Scripts/kokoro_server.py`, port 18923)
-3. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket
-4. **FallbackTTSService** -- macOS `AVSpeechSynthesizer` (no audio data returned, plays directly)
+2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English, `avaNeural` voice)
+3. **FallbackTTSService** -- macOS `AVSpeechSynthesizer` with `en-US` voice (no audio data returned, plays directly)
 
 ## Project Structure
 

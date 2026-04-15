@@ -18,18 +18,6 @@ DerivedData/
 *.swp
 *~.nib
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-venv/
-env/
-
 # IDEs
 .vscode/
 .idea/
@@ -39,7 +27,6 @@ env/
 # Project-specific
 .env
 .env.local
-Scripts/kokoro_server_env/
 
 # XcodeGen — generated, do not commit
 *.xcodeproj/

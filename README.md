@@ -3,7 +3,7 @@
 A macOS menu bar app that reads selected text aloud with Chinese translation.
 
 Select any text in any app, press the shortcut, and SoundsRight will:
-- Pronounce it using high-quality TTS (Kokoro local model, Edge TTS, or system fallback)
+- Pronounce it in American English using high-quality TTS (Edge TTS, with macOS system voice as fallback)
 - Translate it to Simplified Chinese (macOS 15+)
 
 ## Modes
@@ -47,16 +47,6 @@ open SoundsRight.xcodeproj
 ```
 
 Then press **Cmd+R** in Xcode to build and run.
-
-### Optional: Local high-quality TTS (Kokoro)
-
-```bash
-cd Scripts
-pip3 install -r requirements.txt
-python3 kokoro_server.py
-```
-
-The app will automatically use Kokoro when the server is running on port 18923.
 
 ## Keyboard shortcut
 
