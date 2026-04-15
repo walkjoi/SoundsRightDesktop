@@ -14,23 +14,20 @@ enum TTSVoice: String, CaseIterable {
     }
 }
 
-enum PlaybackRate: Double, CaseIterable, Comparable {
+enum PlaybackRate: Double, CaseIterable, Comparable, Identifiable {
     case slow = 0.5
     case moderate = 0.75
     case normal = 1.0
     case fast = 1.25
+    case faster = 1.5
+
+    static let defaultOptions: [PlaybackRate] = [.slow, .moderate, .normal, .fast, .faster]
+
+    var id: Double { rawValue }
 
     var ssmlRate: String {
-        switch self {
-        case .slow:
-            return "-50%"
-        case .moderate:
-            return "-25%"
-        case .normal:
-            return "+0%"
-        case .fast:
-            return "+25%"
-        }
+        let percentage = Int(((rawValue - 1.0) * 100).rounded())
+        return percentage >= 0 ? "+\(percentage)%" : "\(percentage)%"
     }
 
     var kokoroSpeed: Double {
@@ -47,24 +44,33 @@ enum PlaybackRate: Double, CaseIterable, Comparable {
             return "1.0x"
         case .fast:
             return "1.25x"
-        }
-    }
-
-    func next() -> PlaybackRate {
-        switch self {
-        case .slow:
-            return .moderate
-        case .moderate:
-            return .normal
-        case .normal:
-            return .fast
-        case .fast:
-            return .slow
+        case .faster:
+            return "1.5x"
         }
     }
 
     static func < (lhs: PlaybackRate, rhs: PlaybackRate) -> Bool {
         lhs.rawValue < rhs.rawValue
+    }
+
+    static func options(from rawValue: String) -> [PlaybackRate] {
+        let parsedRates = rawValue
+            .split(separator: ",")
+            .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            .compactMap(PlaybackRate.init(rawValue:))
+
+        return sanitized(parsedRates)
+    }
+
+    static func storageValue(for rates: [PlaybackRate]) -> String {
+        sanitized(rates)
+            .map { String($0.rawValue) }
+            .joined(separator: ",")
+    }
+
+    static func sanitized(_ rates: [PlaybackRate]) -> [PlaybackRate] {
+        let uniqueRates = Array(Set(rates)).sorted()
+        return uniqueRates.isEmpty ? defaultOptions : uniqueRates
     }
 }
 

@@ -44,8 +44,25 @@ final class AppState: ObservableObject {
 
     @AppStorage("autoPlay") var autoPlay: Bool = true
     @AppStorage("playbackRate") var playbackRateRaw: Double = 1.0
+    @AppStorage("playbackRateOptions") var playbackRateOptionsRaw: String =
+        PlaybackRate.storageValue(for: PlaybackRate.defaultOptions)
+
+    var availablePlaybackRates: [PlaybackRate] {
+        PlaybackRate.options(from: playbackRateOptionsRaw)
+    }
+
     var playbackRate: PlaybackRate {
-        PlaybackRate(rawValue: playbackRateRaw) ?? .normal
+        let availableRates = availablePlaybackRates
+
+        if let storedRate = PlaybackRate(rawValue: playbackRateRaw), availableRates.contains(storedRate) {
+            return storedRate
+        }
+
+        if availableRates.contains(.normal) {
+            return .normal
+        }
+
+        return availableRates.first ?? .normal
     }
 
     // MARK: - Services
@@ -318,12 +335,83 @@ final class AppState: ObservableObject {
     // MARK: - Speed Control
 
     func cycleSpeed() {
-        let newRate = playbackRate.next()
-        playbackRateRaw = newRate.rawValue
-        logger.info("Playback rate changed to \(newRate.displayLabel)")
+        let availableRates = availablePlaybackRates
+        guard !availableRates.isEmpty else { return }
+
+        let currentRate = playbackRate
+        let currentIndex = availableRates.firstIndex(of: currentRate) ?? 0
+        let nextIndex = availableRates.index(after: currentIndex)
+        let newRate = nextIndex < availableRates.endIndex ? availableRates[nextIndex] : availableRates[availableRates.startIndex]
+
+        setPlaybackRate(newRate)
+    }
+
+    func setPlaybackRate(_ rate: PlaybackRate) {
+        let previousRate = playbackRate
+        playbackRateRaw = rate.rawValue
+        guard previousRate != rate else { return }
+
+        logger.info("Playback rate changed to \(rate.displayLabel)")
 
         if case .playing = ttsState {
-            audioPlayer.setRate(Float(newRate.rawValue))
+            let shouldLoop = isLooping
+            Task {
+                await restartPlaybackForUpdatedRate(loop: shouldLoop)
+            }
+        }
+    }
+
+    func setPlaybackRateOptions(_ rates: [PlaybackRate]) {
+        let sanitizedRates = PlaybackRate.sanitized(rates)
+        let previousRate = PlaybackRate(rawValue: playbackRateRaw) ?? playbackRate
+        playbackRateOptionsRaw = PlaybackRate.storageValue(for: sanitizedRates)
+
+        if !sanitizedRates.contains(previousRate) {
+            setPlaybackRate(sanitizedRates.contains(.normal) ? .normal : sanitizedRates[0])
+        }
+    }
+
+    func isPlaybackRateEnabled(_ rate: PlaybackRate) -> Bool {
+        availablePlaybackRates.contains(rate)
+    }
+
+    func resetPlaybackRateOptions() {
+        playbackRateOptionsRaw = PlaybackRate.storageValue(for: PlaybackRate.defaultOptions)
+        setPlaybackRate(.normal)
+    }
+
+    private func restartPlaybackForUpdatedRate(loop: Bool) async {
+        guard !currentText.isEmpty else { return }
+
+        ttsState = .loading
+        lastError = nil
+
+        let result = await ttsManager.synthesize(text: currentText, rate: playbackRate)
+
+        switch result {
+        case .audioData(let audioData):
+            do {
+                try audioPlayer.play(data: audioData, loop: loop)
+                isLooping = loop
+                ttsState = .playing
+                logger.info("Restarted playback with updated rate")
+            } catch {
+                isLooping = false
+                ttsState = .error(error.localizedDescription)
+                lastError = error.localizedDescription
+                logger.error("Failed to restart audio after rate change: \(error.localizedDescription)")
+            }
+
+        case .fallbackUsed:
+            isLooping = false
+            ttsState = .finished
+            logger.info("Fallback TTS played successfully after rate change")
+
+        case .failed(let error):
+            isLooping = false
+            ttsState = .error(error.localizedDescription)
+            lastError = error.localizedDescription
+            logger.error("TTS synthesis failed after rate change: \(error.localizedDescription)")
         }
     }
 
@@ -448,7 +536,7 @@ final class AppState: ObservableObject {
     func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 300),
+                contentRect: NSRect(x: 0, y: 0, width: 420, height: 420),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
