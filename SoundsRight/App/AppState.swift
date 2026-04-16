@@ -29,6 +29,9 @@ final class AppState: ObservableObject {
     @Published var isTranslating: Bool = false
     @Published var translationError: String?
 
+    /// True while the Chinese translation of dictionary definitions is in flight — word + phonetics are already visible.
+    @Published var isTranslatingDefinitions: Bool = false
+
     @Published var ttsState: TTSPlaybackState = .idle
     @Published var lastError: String?
     @Published var isLooping: Bool = false
@@ -39,6 +42,28 @@ final class AppState: ObservableObject {
 
     /// Incrementing this triggers the translation task in TranslationView (Apple Translation Framework)
     @Published var translationTrigger: Int = 0
+
+    /// Incrementing this triggers batched dictionary definition translation in TranslationView.
+    @Published var dictionaryTranslationTrigger: Int = 0
+
+    struct PendingDictionaryResult {
+        let requestID: Int
+        let result: DictionaryResult
+    }
+
+    struct PendingTranslation {
+        let requestID: Int
+        let text: String
+    }
+
+    /// English-only dictionary result awaiting Chinese translation. Internal handoff to TranslationView.
+    var pendingDictionaryResult: PendingDictionaryResult?
+
+    /// Sentence-mode text awaiting Apple Translation. Internal handoff to TranslationView.
+    var pendingTranslation: PendingTranslation?
+
+    /// Monotonic ID bumped on every activation. Async callbacks guard on this to avoid stale writes.
+    private(set) var currentRequestID: Int = 0
 
     // MARK: - App Storage
 
@@ -152,7 +177,10 @@ final class AppState: ObservableObject {
 
     @MainActor
     func activate(mode: ActivationMode) async {
-        logger.info("Activate triggered with mode: \(mode.rawValue)")
+        currentRequestID += 1
+        let requestID = currentRequestID
+
+        logger.info("Activate triggered with mode: \(mode.rawValue), requestID: \(requestID)")
         lastActivationMode = mode
 
         // Clean up any active state from the previous activation
@@ -169,16 +197,21 @@ final class AppState: ObservableObject {
             return
         }
 
+        guard requestID == currentRequestID else { return }
+
         currentText = selectedText
         translation = nil
         dictionaryResult = nil
         translationError = nil
+        pendingDictionaryResult = nil
+        pendingTranslation = nil
+        isTranslatingDefinitions = false
         ttsState = .idle
 
         switch mode {
         case .translation:
             showPanel()
-            async let translationTask: Void = startTranslation()
+            async let translationTask: Void = startTranslation(requestID: requestID)
             if autoPlay {
                 async let playbackTask: Void = playTTS()
                 _ = await (translationTask, playbackTask)
@@ -193,22 +226,38 @@ final class AppState: ObservableObject {
 
     // MARK: - Translation
 
-    private func startTranslation() async {
+    private func startTranslation(requestID: Int) async {
         guard !currentText.isEmpty else { return }
+        guard requestID == currentRequestID else { return }
 
         isTranslating = true
         translationError = nil
         translation = nil
         dictionaryResult = nil
+        pendingDictionaryResult = nil
+        pendingTranslation = nil
+        isTranslatingDefinitions = false
 
         if let word = await translationService.dictionaryLookupCandidate(from: currentText) {
+            guard requestID == currentRequestID else { return }
             do {
                 let result = try await translationService.lookupDictionaryEntry(for: word)
-                dictionaryResult = result
-                isTranslating = false
-                resizePanelToFitContent()
+                guard requestID == currentRequestID else { return }
+                if #available(macOS 15, *) {
+                    dictionaryResult = result
+                    pendingDictionaryResult = PendingDictionaryResult(requestID: requestID, result: result)
+                    isTranslating = false
+                    isTranslatingDefinitions = true
+                    dictionaryTranslationTrigger += 1
+                    resizePanelToFitContent()
+                } else {
+                    dictionaryResult = result
+                    isTranslating = false
+                    resizePanelToFitContent()
+                }
                 logger.info("Dictionary lookup succeeded")
             } catch {
+                guard requestID == currentRequestID else { return }
                 translationError = error.localizedDescription
                 isTranslating = false
                 resizePanelToFitContent()
@@ -218,7 +267,7 @@ final class AppState: ObservableObject {
         }
 
         if #available(macOS 15, *) {
-            // Kick off the translation task in TranslationView by incrementing the trigger.
+            pendingTranslation = PendingTranslation(requestID: requestID, text: currentText)
             translationTrigger += 1
         } else {
             isTranslating = false
@@ -227,18 +276,42 @@ final class AppState: ObservableObject {
     }
 
     /// Called by TranslationView when Apple Translation succeeds.
-    func didFinishTranslation(_ text: String) {
+    func didFinishTranslation(_ text: String, requestID: Int) {
+        guard requestID == currentRequestID else { return }
         translation = TranslationResult(translated: text)
+        pendingTranslation = nil
         isTranslating = false
         translationError = nil
         logger.info("Translation succeeded")
     }
 
     /// Called by TranslationView when Apple Translation fails.
-    func didFailTranslation(_ error: Error) {
+    func didFailTranslation(_ error: Error, requestID: Int) {
+        guard requestID == currentRequestID else { return }
         translationError = error.localizedDescription
+        pendingTranslation = nil
         isTranslating = false
         logger.error("Translation failed: \(error.localizedDescription)")
+    }
+
+    /// Called by TranslationView after batched dictionary definition translation succeeds.
+    func didFinishDictionaryTranslation(_ result: DictionaryResult, requestID: Int) {
+        guard requestID == currentRequestID else { return }
+        dictionaryResult = result
+        pendingDictionaryResult = nil
+        isTranslatingDefinitions = false
+        resizePanelToFitContent()
+        logger.info("Dictionary definitions translated")
+    }
+
+    /// Called by TranslationView when dictionary translation fails — fall back to English-only result.
+    func didFailDictionaryTranslation(fallback: DictionaryResult, error: Error, requestID: Int) {
+        guard requestID == currentRequestID else { return }
+        dictionaryResult = fallback
+        pendingDictionaryResult = nil
+        isTranslatingDefinitions = false
+        resizePanelToFitContent()
+        logger.error("Dictionary translation failed, showing English-only: \(error.localizedDescription)")
     }
 
     // MARK: - TTS Playback

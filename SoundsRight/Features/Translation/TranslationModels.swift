@@ -14,6 +14,13 @@ struct DictionaryMeaning: Sendable, Identifiable {
     let id = UUID()
     let partOfSpeech: String
     let definition: String
+    let translatedDefinition: String?
+
+    init(partOfSpeech: String, definition: String, translatedDefinition: String? = nil) {
+        self.partOfSpeech = partOfSpeech
+        self.definition = definition
+        self.translatedDefinition = translatedDefinition
+    }
 }
 
 enum TranslationError: LocalizedError {

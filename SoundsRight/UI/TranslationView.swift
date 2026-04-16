@@ -37,6 +37,7 @@ struct TranslationView: View {
         .padding(20)
         .frame(minWidth: 420, maxWidth: 560)
         .appleTranslationTask(appState: appState)
+        .dictionaryTranslationTask(appState: appState)
     }
 
     @ViewBuilder
@@ -62,30 +63,51 @@ struct TranslationView: View {
 
                     if !dictionaryResult.phonetics.isEmpty {
                         Text(dictionaryResult.phonetics.joined(separator: "  "))
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(dictionaryResult.meanings) { meaning in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(meaning.partOfSpeech.capitalized)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                                .textCase(.uppercase)
-
-                            Text(meaning.definition)
-                                .font(.system(size: 16, weight: .medium, design: .rounded))
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                if appState.isTranslatingDefinitions {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Translating definitions…")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.tertiary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                } else {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(dictionaryResult.meanings) { meaning in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(meaning.partOfSpeech.capitalized)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.tertiary)
+                                        .textCase(.uppercase)
+
+                                    Text(meaning.definition)
+                                        .font(.system(size: 16, weight: .medium, design: .rounded))
+                                        .foregroundStyle(.primary)
+                                        .fixedSize(horizontal: false, vertical: true)
+
+                                    if let translated = meaning.translatedDefinition {
+                                        Text(translated)
+                                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 260)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
@@ -111,6 +133,15 @@ private extension View {
             self
         }
     }
+
+    @ViewBuilder
+    func dictionaryTranslationTask(appState: AppState) -> some View {
+        if #available(macOS 15, *) {
+            self.modifier(DictionaryTranslationModifier(appState: appState))
+        } else {
+            self
+        }
+    }
 }
 
 @available(macOS 15.0, *)
@@ -120,13 +151,6 @@ private struct AppleTranslationModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onAppear {
-                guard !appState.currentText.isEmpty else { return }
-                config = TranslationSession.Configuration(
-                    source: Locale.Language(identifier: "en"),
-                    target: Locale.Language(identifier: "zh-Hans")
-                )
-            }
             .onChange(of: appState.translationTrigger) {
                 config = TranslationSession.Configuration(
                     source: Locale.Language(identifier: "en"),
@@ -134,11 +158,58 @@ private struct AppleTranslationModifier: ViewModifier {
                 )
             }
             .translationTask(config) { session in
+                let pending = await MainActor.run { appState.pendingTranslation }
+                guard let pending else { return }
                 do {
-                    let response = try await session.translate(appState.currentText)
-                    await MainActor.run { appState.didFinishTranslation(response.targetText) }
+                    let response = try await session.translate(pending.text)
+                    await MainActor.run { appState.didFinishTranslation(response.targetText, requestID: pending.requestID) }
                 } catch {
-                    await MainActor.run { appState.didFailTranslation(error) }
+                    await MainActor.run { appState.didFailTranslation(error, requestID: pending.requestID) }
+                }
+            }
+    }
+}
+
+@available(macOS 15.0, *)
+private struct DictionaryTranslationModifier: ViewModifier {
+    @ObservedObject var appState: AppState
+    @State private var config: TranslationSession.Configuration?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: appState.dictionaryTranslationTrigger) {
+                config = TranslationSession.Configuration(
+                    source: Locale.Language(identifier: "en"),
+                    target: Locale.Language(identifier: "zh-Hans")
+                )
+            }
+            .translationTask(config) { session in
+                let pending = await MainActor.run { appState.pendingDictionaryResult }
+                guard let pending else { return }
+                let requestID = pending.requestID
+                let dictResult = pending.result
+                do {
+                    var translations: [String] = []
+                    translations.reserveCapacity(dictResult.meanings.count)
+                    for meaning in dictResult.meanings {
+                        let response = try await session.translate(meaning.definition)
+                        translations.append(response.targetText)
+                    }
+                    let translatedMeanings = zip(dictResult.meanings, translations).map { meaning, translated in
+                        DictionaryMeaning(
+                            partOfSpeech: meaning.partOfSpeech,
+                            definition: meaning.definition,
+                            translatedDefinition: translated
+                        )
+                    }
+                    let result = DictionaryResult(
+                        word: dictResult.word,
+                        phonetics: dictResult.phonetics,
+                        meanings: translatedMeanings
+                    )
+                    await MainActor.run { appState.didFinishDictionaryTranslation(result, requestID: requestID) }
+                } catch {
+                    await MainActor.run { appState.didFailDictionaryTranslation(fallback: dictResult, error: error, requestID: requestID) }
                 }
             }
     }
