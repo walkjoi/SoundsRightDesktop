@@ -73,11 +73,7 @@ struct PlaybackControls: View {
     }
 
     private func playAction() {
-        if case .playing = appState.ttsState {
-            appState.stopTTS()
-        } else {
-            Task { await appState.playTTS() }
-        }
+        appState.togglePlayPause()
     }
 }
 

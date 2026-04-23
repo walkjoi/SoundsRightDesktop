@@ -105,6 +105,7 @@ final class AppState: ObservableObject {
     private var isInitialized = false
     private var lastActivationMode: ActivationMode = .translation
     private var hideSoundOnlyTask: Task<Void, Never>?
+    private var restartPlaybackTask: Task<Void, Never>?
 
     // MARK: - Logger
 
@@ -187,6 +188,8 @@ final class AppState: ObservableObject {
         isLooping = false
         hideSoundOnlyTask?.cancel()
         hideSoundOnlyTask = nil
+        restartPlaybackTask?.cancel()
+        restartPlaybackTask = nil
         audioPlayer.reset()
         floatingPanel?.orderOut(nil)
         isPanelVisible = false
@@ -425,7 +428,8 @@ final class AppState: ObservableObject {
 
         if case .playing = ttsState {
             let shouldLoop = isLooping
-            Task {
+            restartPlaybackTask?.cancel()
+            restartPlaybackTask = Task {
                 await restartPlaybackForUpdatedRate(loop: shouldLoop)
             }
         }
@@ -452,11 +456,13 @@ final class AppState: ObservableObject {
 
     private func restartPlaybackForUpdatedRate(loop: Bool) async {
         guard !currentText.isEmpty else { return }
+        let requestID = currentRequestID
 
         ttsState = .loading
         lastError = nil
 
         let result = await ttsManager.synthesize(text: currentText, rate: playbackRate)
+        guard requestID == currentRequestID, !Task.isCancelled else { return }
 
         switch result {
         case .audioData(let audioData):
@@ -491,13 +497,15 @@ final class AppState: ObservableObject {
         logger.debug("Showing floating panel")
 
         if floatingPanel == nil {
-            let panel = FloatingPanel()
-            panel.onClose = { [weak self] in
-                Task { @MainActor [weak self] in
-                    self?.stopTTS()
-                }
+            floatingPanel = FloatingPanel()
+        }
+
+        let requestID = currentRequestID
+        floatingPanel?.onClose = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentRequestID == requestID else { return }
+                self.stopTTS()
             }
-            floatingPanel = panel
         }
 
         guard let panel = floatingPanel else {
@@ -553,13 +561,15 @@ final class AppState: ObservableObject {
 
     private func showSoundOnlyHUD() {
         if soundOnlyPanel == nil {
-            let panel = FloatingPanel(contentSize: NSSize(width: 180, height: 40), borderless: true)
-            panel.onClose = { [weak self] in
-                Task { @MainActor [weak self] in
-                    self?.stopTTS()
-                }
+            soundOnlyPanel = FloatingPanel(contentSize: NSSize(width: 180, height: 40), borderless: true)
+        }
+
+        let requestID = currentRequestID
+        soundOnlyPanel?.onClose = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentRequestID == requestID else { return }
+                self.stopTTS()
             }
-            soundOnlyPanel = panel
         }
 
         guard let panel = soundOnlyPanel else { return }
@@ -587,6 +597,8 @@ final class AppState: ObservableObject {
     /// Called by the HUD's dismiss button.
     func dismissSoundOnlyHUD() {
         logger.info("Dismissing sound only HUD")
+        hideSoundOnlyTask?.cancel()
+        hideSoundOnlyTask = nil
         stopTTS()
         soundOnlyPanel?.orderOut(nil)
     }

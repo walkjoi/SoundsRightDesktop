@@ -47,6 +47,7 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
 
     override func cancelOperation(_ sender: Any?) {
+        onClose?()
         self.orderOut(nil)
     }
 
