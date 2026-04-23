@@ -190,13 +190,13 @@ private struct CollectionDetailPane: View {
 
     @ViewBuilder
     private var content: some View {
-        switch item.content {
-        case .word:
-            if let dict = item.toDictionaryResult {
-                DictionaryDetailView(result: dict)
-            }
-        case .phrase(let translation):
-            ScrollView(.vertical, showsIndicators: false) {
+        ScrollView(.vertical, showsIndicators: false) {
+            switch item.content {
+            case .word:
+                if let dict = item.toDictionaryResult {
+                    DictionaryDetailView(result: dict)
+                }
+            case .phrase(let translation):
                 VStack(alignment: .leading, spacing: 14) {
                     Text(item.sourceText)
                         .font(.system(size: 16, weight: .regular))
@@ -213,6 +213,7 @@ private struct CollectionDetailPane: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var isPlaying: Bool {

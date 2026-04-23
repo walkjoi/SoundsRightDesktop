@@ -31,32 +31,29 @@ struct DictionaryDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
             } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(result.meanings) { meaning in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(meaning.partOfSpeech.capitalized)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                                    .textCase(.uppercase)
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(result.meanings) { meaning in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(meaning.partOfSpeech.capitalized)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                                .textCase(.uppercase)
 
-                                Text(meaning.definition)
-                                    .font(.system(size: 16, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.primary)
+                            Text(meaning.definition)
+                                .font(.system(size: 16, weight: .medium, design: .rounded))
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if let translated = meaning.translatedDefinition {
+                                Text(translated)
+                                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                                    .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
-
-                                if let translated = meaning.translatedDefinition {
-                                    Text(translated)
-                                        .font(.system(size: 14, weight: .regular, design: .rounded))
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

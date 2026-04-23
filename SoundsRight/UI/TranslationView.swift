@@ -55,10 +55,13 @@ struct TranslationView: View {
                     .foregroundStyle(.tertiary)
             }
         } else if let dictionaryResult = appState.dictionaryResult {
-            DictionaryDetailView(
-                result: dictionaryResult,
-                isTranslatingDefinitions: appState.isTranslatingDefinitions
-            )
+            ScrollView(.vertical, showsIndicators: false) {
+                DictionaryDetailView(
+                    result: dictionaryResult,
+                    isTranslatingDefinitions: appState.isTranslatingDefinitions
+                )
+            }
+            .frame(maxHeight: 260)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 Text(appState.translation?.translated ?? "")
