@@ -96,12 +96,14 @@ final class AppState: ObservableObject {
     private let translationService = TranslationService()
     let audioPlayer = AudioPlayer()
     let shortcutManager = ShortcutManager()
+    let collectionStore = CollectionStore()
 
     // MARK: - Panel Management
 
     private var floatingPanel: FloatingPanel?
     private var soundOnlyPanel: FloatingPanel?
     private var settingsWindow: NSWindow?
+    private var collectionWindow: NSWindow?
     private var isInitialized = false
     private var lastActivationMode: ActivationMode = .translation
     private var hideSoundOnlyTask: Task<Void, Never>?
@@ -611,6 +613,108 @@ final class AppState: ObservableObject {
             guard !Task.isCancelled else { return }
             self?.soundOnlyPanel?.orderOut(nil)
         }
+    }
+
+    // MARK: - Settings Window
+
+    // MARK: - Collection
+
+    var isCurrentSavedInCollection: Bool {
+        guard !currentText.isEmpty else { return false }
+        return collectionStore.contains(sourceText: currentText)
+    }
+
+    /// True when there's a user-visible translation/dictionary result that's eligible to save.
+    var canSaveCurrentToCollection: Bool {
+        guard !currentText.isEmpty else { return false }
+        if isTranslating || isTranslatingDefinitions { return false }
+        return dictionaryResult != nil || translation != nil
+    }
+
+    func toggleSaveCurrentToCollection() {
+        guard !currentText.isEmpty else { return }
+
+        if collectionStore.contains(sourceText: currentText) {
+            if let existing = collectionStore.items.first(where: {
+                $0.normalizedKey == CollectionItem.normalizedKey(for: currentText)
+            }) {
+                collectionStore.remove(id: existing.id)
+                logger.info("Removed item from collection")
+            }
+            return
+        }
+
+        let item: CollectionItem?
+        if let dict = dictionaryResult {
+            item = CollectionItem.from(dictionaryResult: dict, sourceText: currentText)
+        } else if let translation = translation {
+            item = CollectionItem.from(translation: translation, sourceText: currentText)
+        } else {
+            item = nil
+        }
+
+        guard let item else {
+            logger.info("Save requested but no translation/dictionary result available")
+            return
+        }
+
+        collectionStore.add(item)
+        logger.info("Saved item to collection")
+    }
+
+    /// Synthesize and play arbitrary text (used by the Collection window).
+    /// Stops any prior playback and does not touch translation state.
+    func playCollectionItem(text: String) async {
+        guard !text.isEmpty else { return }
+        logger.info("Playing collection item")
+
+        isLooping = false
+        restartPlaybackTask?.cancel()
+        restartPlaybackTask = nil
+        audioPlayer.reset()
+
+        ttsState = .loading
+        lastError = nil
+
+        let result = await ttsManager.synthesize(text: text, rate: playbackRate)
+
+        switch result {
+        case .audioData(let audioData):
+            do {
+                try audioPlayer.play(data: audioData)
+                ttsState = .playing
+            } catch {
+                ttsState = .error(error.localizedDescription)
+                lastError = error.localizedDescription
+                logger.error("Collection playback failed: \(error.localizedDescription)")
+            }
+        case .fallbackUsed:
+            ttsState = .finished
+        case .failed(let error):
+            ttsState = .error(error.localizedDescription)
+            lastError = error.localizedDescription
+            logger.error("Collection TTS synthesis failed: \(error.localizedDescription)")
+        }
+    }
+
+    func showCollectionWindow() {
+        if collectionWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 720, height: 460),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Collection"
+            window.contentView = NSHostingView(rootView: CollectionWindowView(appState: self))
+            window.center()
+            window.isReleasedWhenClosed = false
+            window.setFrameAutosaveName("CollectionWindow")
+            window.minSize = NSSize(width: 560, height: 360)
+            collectionWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        collectionWindow?.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Settings Window

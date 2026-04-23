@@ -2,6 +2,12 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
+    @ObservedObject var collectionStore: CollectionStore
+
+    init(appState: AppState) {
+        self.appState = appState
+        self.collectionStore = appState.collectionStore
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +28,13 @@ struct MenuBarView: View {
             Divider()
                 .padding(.horizontal, 10)
                 .padding(.vertical, 2)
+
+            MenuRow(
+                icon: "bookmark",
+                label: "Collection (\(collectionStore.items.count))"
+            ) {
+                appState.showCollectionWindow()
+            }
 
             MenuRow(icon: "gear", label: "Settings") {
                 appState.showSettings()

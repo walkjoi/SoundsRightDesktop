@@ -55,60 +55,10 @@ struct TranslationView: View {
                     .foregroundStyle(.tertiary)
             }
         } else if let dictionaryResult = appState.dictionaryResult {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(dictionaryResult.word)
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.primary)
-
-                    if !dictionaryResult.phonetics.isEmpty {
-                        Text(dictionaryResult.phonetics.joined(separator: "  "))
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                if appState.isTranslatingDefinitions {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Translating definitions…")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 4)
-                } else {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(dictionaryResult.meanings) { meaning in
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(meaning.partOfSpeech.capitalized)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.tertiary)
-                                        .textCase(.uppercase)
-
-                                    Text(meaning.definition)
-                                        .font(.system(size: 16, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.primary)
-                                        .fixedSize(horizontal: false, vertical: true)
-
-                                    if let translated = meaning.translatedDefinition {
-                                        Text(translated)
-                                            .font(.system(size: 14, weight: .regular, design: .rounded))
-                                            .foregroundStyle(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 260)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+            DictionaryDetailView(
+                result: dictionaryResult,
+                isTranslatingDefinitions: appState.isTranslatingDefinitions
+            )
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 Text(appState.translation?.translated ?? "")

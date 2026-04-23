@@ -135,8 +135,8 @@ Lives in `UI/CollectionWindowView.swift`. Two-pane layout using
   - A Play button at the top of the detail area, wired to
     `appState.playCollectionItem(text: item.sourceText)`. It reflects
     loading/playing/error the same way `PlaybackControls` does.
-- **Empty state** — centered gray text "Save words from the translation
-  panel to see them here." shown when `items.isEmpty`.
+- **Empty state** — centered gray text "Save words and phrases from the
+  translation panel to see them here." shown when `items.isEmpty`.
 
 ### Extracted view
 

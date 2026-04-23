@@ -2,6 +2,12 @@ import SwiftUI
 
 struct PlaybackControls: View {
     @ObservedObject var appState: AppState
+    @ObservedObject var collectionStore: CollectionStore
+
+    init(appState: AppState) {
+        self.appState = appState
+        self.collectionStore = appState.collectionStore
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -59,7 +65,28 @@ struct PlaybackControls: View {
             }
             .buttonStyle(.plain)
             .help("Change speed")
+
+            Spacer(minLength: 0)
+
+            // Save to collection
+            Button(action: { appState.toggleSaveCurrentToCollection() }) {
+                Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isSaved ? Color.accentColor : Color.secondary)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        isSaved ? Color.accentColor.opacity(0.12) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!appState.canSaveCurrentToCollection)
+            .help(isSaved ? "Remove from collection" : "Save to collection")
         }
+    }
+
+    private var isSaved: Bool {
+        appState.isCurrentSavedInCollection
     }
 
     private var isPlaying: Bool {
