@@ -88,8 +88,10 @@ struct SoundOnlyHUD: View {
     }
 }
 
+#if DEBUG
 #Preview {
     let s = AppState()
     s.currentText = "Hello"
     return SoundOnlyHUD(appState: s)
 }
+#endif

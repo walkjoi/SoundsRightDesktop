@@ -104,6 +104,7 @@ struct PlaybackControls: View {
     }
 }
 
+#if DEBUG
 #Preview {
     let s = AppState()
     s.currentText = "Hello"
@@ -111,3 +112,4 @@ struct PlaybackControls: View {
         .padding()
         .frame(width: 420)
 }
+#endif
