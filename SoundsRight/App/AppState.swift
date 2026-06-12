@@ -33,7 +33,6 @@ final class AppState: ObservableObject {
     @Published var isTranslatingDefinitions: Bool = false
 
     @Published var ttsState: TTSPlaybackState = .idle
-    @Published var lastError: String?
     @Published var isLooping: Bool = false
 
     @Published var isPanelVisible: Bool = false
@@ -108,6 +107,18 @@ final class AppState: ObservableObject {
     private var lastActivationMode: ActivationMode = .translation
     private var hideSoundOnlyTask: Task<Void, Never>?
     private var restartPlaybackTask: Task<Void, Never>?
+    private var playbackTask: Task<Void, Never>?
+    private var isPresentingAccessibilityAlert = false
+
+    /// Monotonic ID for playback intents (hotkey play, collection play, rate restart).
+    /// Captured before `synthesize` and checked after, so a superseded synthesis
+    /// cannot clobber a newer one's audio or state.
+    private var playbackGeneration = 0
+
+    /// Generation of the live AVSpeech fallback utterance, nil when playback is
+    /// audio-data-backed (or idle). Lets finish/cancel events and stop requests be
+    /// attributed to the exact utterance instead of a racy Bool.
+    private var activeFallbackGeneration: Int?
 
     // MARK: - Logger
 
@@ -150,6 +161,24 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Mirror of audioPlayer.onFinished for the AVSpeech fallback path.
+        await ttsManager.setFallbackFinishedHandler { [weak self] generation, finishedNaturally in
+            guard let self, generation == self.activeFallbackGeneration else { return }
+            self.activeFallbackGeneration = nil
+            guard finishedNaturally else { return }
+            switch self.ttsState {
+            // .paused as well: a pause click racing the utterance's natural finish
+            // must not strand the UI in a paused state with no speech to resume.
+            case .playing, .paused:
+                self.ttsState = .finished
+                if self.lastActivationMode == .soundOnly && !self.isLooping {
+                    self.hideSoundOnlyHUD()
+                }
+            default:
+                break
+            }
+        }
+
         shortcutManager.register(
             onTranslate: { [weak self] in
                 Task { @MainActor in
@@ -171,6 +200,7 @@ final class AppState: ObservableObject {
         shortcutManager.unregister()
         audioPlayer.stop()
         await ttsManager.shutdown()
+        await collectionStore.flush()
         hidePanel()
         soundOnlyPanel?.orderOut(nil)
         logger.info("App shutdown complete")
@@ -188,17 +218,35 @@ final class AppState: ObservableObject {
 
         // Clean up any active state from the previous activation
         isLooping = false
+        playbackGeneration += 1
         hideSoundOnlyTask?.cancel()
         hideSoundOnlyTask = nil
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil
+        playbackTask?.cancel()
+        playbackTask = nil
         audioPlayer.reset()
+        await stopFallbackPlayback()
         floatingPanel?.orderOut(nil)
         isPanelVisible = false
         soundOnlyPanel?.orderOut(nil)
 
-        guard let selectedText = await SelectionReader.readSelectedText() else {
+        let selectedText: String
+        switch await SelectionReader.readSelectedText() {
+        case .success(let text):
+            selectedText = text
+        case .failure(.noSelection):
             logger.info("No text selected — ignoring activation")
+            return
+        case .failure(.readInProgress):
+            logger.info("Selection read already in progress — ignoring activation")
+            return
+        case .failure(.noPermission):
+            logger.warning("Accessibility permission missing — prompting user")
+            presentAccessibilityAlert()
+            return
+        case .failure(.eventCreationFailed):
+            logger.error("Could not synthesize Cmd+C event — ignoring activation")
             return
         }
 
@@ -210,22 +258,59 @@ final class AppState: ObservableObject {
         translationError = nil
         pendingDictionaryResult = nil
         pendingTranslation = nil
+        isTranslating = false
         isTranslatingDefinitions = false
         ttsState = .idle
 
         switch mode {
         case .translation:
             showPanel()
-            async let translationTask: Void = startTranslation(requestID: requestID)
             if autoPlay {
-                async let playbackTask: Void = playTTS()
-                _ = await (translationTask, playbackTask)
-            } else {
-                await translationTask
+                startPlayback { await self.playTTS() }
             }
+            await startTranslation(requestID: requestID)
         case .soundOnly:
             showSoundOnlyHUD()
-            await playTTS()
+            startPlayback { await self.playTTS() }
+        }
+    }
+
+    /// Cancel-and-replace owner for playback tasks, so a new playback intent always
+    /// invalidates the previous one (cancellation reaches TTSManager's fallback guard).
+    private func startPlayback(_ operation: @escaping @MainActor @Sendable () async -> Void) {
+        playbackTask?.cancel()
+        playbackTask = Task { await operation() }
+    }
+
+    /// Stops any AVSpeech fallback speech. Unconditional (not gated on tracked state):
+    /// `FallbackTTSService.stop()` is an idempotent no-op when nothing is speaking, and an
+    /// untracked orphan utterance must still be silenced.
+    private func stopFallbackPlayback() async {
+        activeFallbackGeneration = nil
+        await ttsManager.stopPlayback()
+    }
+
+    /// Shown when a hotkey fires without the Accessibility grant the app depends on.
+    private func presentAccessibilityAlert() {
+        // runModal's nested run loop still drains the main queue, so repeated hotkey
+        // presses would stack identical alerts without this guard.
+        guard !isPresentingAccessibilityAlert else { return }
+        isPresentingAccessibilityAlert = true
+        defer { isPresentingAccessibilityAlert = false }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Accessibility Permission Required"
+        alert.informativeText = """
+        SoundsRight reads the selected text by simulating Cmd+C, which needs \
+        Accessibility access. Enable SoundsRight in System Settings → \
+        Privacy & Security → Accessibility, then press the shortcut again.
+        """
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -263,10 +348,18 @@ final class AppState: ObservableObject {
                 logger.info("Dictionary lookup succeeded")
             } catch {
                 guard requestID == currentRequestID else { return }
-                translationError = error.localizedDescription
-                isTranslating = false
-                resizePanelToFitContent()
                 logger.error("Dictionary lookup failed: \(error.localizedDescription)")
+                if #available(macOS 15, *) {
+                    // Word not in the dictionary (or API unavailable) — Apple Translation
+                    // handles single words fine, so degrade to the sentence path.
+                    logger.info("Falling back to Apple Translation for single word")
+                    pendingTranslation = PendingTranslation(requestID: requestID, text: currentText)
+                    translationTrigger += 1
+                } else {
+                    translationError = error.localizedDescription
+                    isTranslating = false
+                    resizePanelToFitContent()
+                }
             }
             return
         }
@@ -323,11 +416,24 @@ final class AppState: ObservableObject {
 
     func playTTS() async {
         logger.info("Starting TTS playback")
+        playbackGeneration += 1
+        let generation = playbackGeneration
         isLooping = false
         ttsState = .loading
-        lastError = nil
+        // Clear stale audio so loop/replay affordances stay disabled while a fresh
+        // synthesis (possibly fallback speech with no data) is in flight.
+        audioPlayer.reset()
+        await stopFallbackPlayback()
 
         let result = await ttsManager.synthesize(text: currentText, rate: playbackRate)
+        guard generation == playbackGeneration, !Task.isCancelled else {
+            // Superseded — if our synthesize already started fallback speech, silence
+            // it (generation-scoped, so a newer utterance is never touched).
+            if case .fallbackUsed(let utteranceGeneration) = result {
+                await ttsManager.stopFallback(generation: utteranceGeneration)
+            }
+            return
+        }
 
         switch result {
         case .audioData(let audioData):
@@ -337,30 +443,37 @@ final class AppState: ObservableObject {
                 logger.info("Audio playback started")
             } catch {
                 ttsState = .error(error.localizedDescription)
-                lastError = error.localizedDescription
                 logger.error("Failed to play audio: \(error.localizedDescription)")
             }
 
-        case .fallbackUsed:
-            ttsState = .finished
-            logger.info("Fallback TTS played successfully")
+        case .fallbackUsed(let utteranceGeneration):
+            activeFallbackGeneration = utteranceGeneration
+            ttsState = .playing
+            logger.info("Fallback TTS playback started")
 
         case .failed(let error):
             ttsState = .error(error.localizedDescription)
-            lastError = error.localizedDescription
             logger.error("TTS synthesis failed: \(error.localizedDescription)")
         }
     }
 
     func pauseTTS() {
         logger.info("Pausing TTS playback")
-        audioPlayer.pause()
+        if activeFallbackGeneration != nil {
+            Task { await ttsManager.pauseFallback() }
+        } else {
+            audioPlayer.pause()
+        }
         ttsState = .paused
     }
 
     func resumeTTS() {
         logger.info("Resuming TTS playback")
-        audioPlayer.resume()
+        if activeFallbackGeneration != nil {
+            Task { await ttsManager.resumeFallback() }
+        } else {
+            audioPlayer.resume()
+        }
         ttsState = .playing
     }
 
@@ -371,11 +484,9 @@ final class AppState: ObservableObject {
             pauseTTS()
         case .paused:
             resumeTTS()
-        case .idle, .finished:
-            Task {
-                await playTTS()
-            }
-        case .loading, .error:
+        case .idle, .finished, .error:
+            startPlayback { await self.playTTS() }
+        case .loading:
             return
         }
     }
@@ -383,7 +494,13 @@ final class AppState: ObservableObject {
     func stopTTS() {
         logger.info("Stopping TTS playback")
         isLooping = false
+        playbackGeneration += 1
+        playbackTask?.cancel()
+        restartPlaybackTask?.cancel()
+        restartPlaybackTask = nil
         audioPlayer.stop()
+        activeFallbackGeneration = nil
+        Task { await ttsManager.stopPlayback() }
         ttsState = .idle
     }
 
@@ -394,6 +511,8 @@ final class AppState: ObservableObject {
             audioPlayer.stop()
             ttsState = .idle
         } else {
+            // Looping replays buffered audio data; fallback speech has none.
+            guard activeFallbackGeneration == nil else { return }
             logger.info("Starting loop")
             do {
                 try audioPlayer.replayLooping()
@@ -401,7 +520,6 @@ final class AppState: ObservableObject {
                 ttsState = .playing
             } catch {
                 ttsState = .error(error.localizedDescription)
-                lastError = error.localizedDescription
                 logger.error("Loop failed: \(error.localizedDescription)")
             }
         }
@@ -458,13 +576,20 @@ final class AppState: ObservableObject {
 
     private func restartPlaybackForUpdatedRate(loop: Bool) async {
         guard !currentText.isEmpty else { return }
-        let requestID = currentRequestID
+        playbackGeneration += 1
+        let generation = playbackGeneration
 
         ttsState = .loading
-        lastError = nil
+        audioPlayer.reset()
+        await stopFallbackPlayback()
 
         let result = await ttsManager.synthesize(text: currentText, rate: playbackRate)
-        guard requestID == currentRequestID, !Task.isCancelled else { return }
+        guard generation == playbackGeneration, !Task.isCancelled else {
+            if case .fallbackUsed(let utteranceGeneration) = result {
+                await ttsManager.stopFallback(generation: utteranceGeneration)
+            }
+            return
+        }
 
         switch result {
         case .audioData(let audioData):
@@ -476,19 +601,18 @@ final class AppState: ObservableObject {
             } catch {
                 isLooping = false
                 ttsState = .error(error.localizedDescription)
-                lastError = error.localizedDescription
                 logger.error("Failed to restart audio after rate change: \(error.localizedDescription)")
             }
 
-        case .fallbackUsed:
+        case .fallbackUsed(let utteranceGeneration):
             isLooping = false
-            ttsState = .finished
-            logger.info("Fallback TTS played successfully after rate change")
+            activeFallbackGeneration = utteranceGeneration
+            ttsState = .playing
+            logger.info("Fallback TTS playback restarted after rate change")
 
         case .failed(let error):
             isLooping = false
             ttsState = .error(error.localizedDescription)
-            lastError = error.localizedDescription
             logger.error("TTS synthesis failed after rate change: \(error.localizedDescription)")
         }
     }
@@ -523,8 +647,9 @@ final class AppState: ObservableObject {
             panel.contentViewController = hostingController
             panel.setContentSize(NSSize(width: 420, height: 180))
             panel.center()
+            // No NSApp.activate here: the panel is .nonactivatingPanel by design so the
+            // source app keeps focus; makeKeyAndOrderFront is enough for Esc and clicks.
             panel.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
@@ -662,21 +787,33 @@ final class AppState: ObservableObject {
         logger.info("Saved item to collection")
     }
 
-    /// Synthesize and play arbitrary text (used by the Collection window).
+    /// Synthesize and play arbitrary text (used by the Collection window and voice preview).
     /// Stops any prior playback and does not touch translation state.
-    func playCollectionItem(text: String) async {
+    func playCollectionItem(text: String) {
+        startPlayback { await self.performCollectionPlayback(text: text) }
+    }
+
+    private func performCollectionPlayback(text: String) async {
         guard !text.isEmpty else { return }
         logger.info("Playing collection item")
+        playbackGeneration += 1
+        let generation = playbackGeneration
 
         isLooping = false
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil
         audioPlayer.reset()
+        await stopFallbackPlayback()
 
         ttsState = .loading
-        lastError = nil
 
         let result = await ttsManager.synthesize(text: text, rate: playbackRate)
+        guard generation == playbackGeneration, !Task.isCancelled else {
+            if case .fallbackUsed(let utteranceGeneration) = result {
+                await ttsManager.stopFallback(generation: utteranceGeneration)
+            }
+            return
+        }
 
         switch result {
         case .audioData(let audioData):
@@ -685,16 +822,21 @@ final class AppState: ObservableObject {
                 ttsState = .playing
             } catch {
                 ttsState = .error(error.localizedDescription)
-                lastError = error.localizedDescription
                 logger.error("Collection playback failed: \(error.localizedDescription)")
             }
-        case .fallbackUsed:
-            ttsState = .finished
+        case .fallbackUsed(let utteranceGeneration):
+            activeFallbackGeneration = utteranceGeneration
+            ttsState = .playing
         case .failed(let error):
             ttsState = .error(error.localizedDescription)
-            lastError = error.localizedDescription
             logger.error("Collection TTS synthesis failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Plays a short sample phrase without disturbing the current selection,
+    /// translation, or collection state (used by Settings → Preview voice).
+    func previewVoice() {
+        playCollectionItem(text: "Hello, I am SoundsRight.")
     }
 
     func showCollectionWindow() {
@@ -713,8 +855,18 @@ final class AppState: ObservableObject {
             window.minSize = NSSize(width: 560, height: 360)
             collectionWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        activateApp()
         collectionWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Activates the app for regular windows (Collection, Settings) using the
+    /// non-deprecated API where available.
+    private func activateApp() {
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     // MARK: - Settings Window
@@ -734,7 +886,7 @@ final class AppState: ObservableObject {
             window.isReleasedWhenClosed = false
             settingsWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        activateApp()
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 }

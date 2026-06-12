@@ -83,13 +83,15 @@ enum ActivationMode: String, CaseIterable {
 }
 
 enum AppConstants {
-    static let claudeAPIURL = "https://api.anthropic.com/v1/messages"
-    static let claudeModel = "claude-sonnet-4-6"
-    static let claudeAPIVersion = "2023-06-01"
     static let dictionaryAPIBaseURL = "https://api.dictionaryapi.dev/api/v2/entries/en/"
     static let edgeTTSEndpoint = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
+    /// Idle timeout between WebSocket frames during Edge TTS synthesis.
+    static let edgeTTSIdleTimeout: TimeInterval = 10
+    /// Hard ceiling on a whole Edge TTS synthesis, even if the server keeps trickling frames.
+    static let edgeTTSSynthesisDeadline: TimeInterval = 30
     static let maxInputLength = 1000
+    /// How long to wait for the synthesized Cmd+C to land on the pasteboard.
+    static let pasteboardCopyTimeoutNanoseconds: UInt64 = 500_000_000
     static let audioCacheMaxEntries = 20
-    static let keychainService = "SoundsRightDesktop"
     static let defaultVoice = TTSVoice.avaNeural
 }

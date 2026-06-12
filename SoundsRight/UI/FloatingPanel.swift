@@ -28,16 +28,8 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
         if !borderless {
             self.titlebarAppearsTransparent = true
             self.titleVisibility = .hidden
-
-            // Vibrancy background for the titled translation panel
-            let effect = NSVisualEffectView()
-            effect.material = .windowBackground
-            effect.blendingMode = .withinWindow
-            effect.state = .active
-            effect.wantsLayer = true
-            effect.layer?.cornerRadius = 14
-            effect.layer?.masksToBounds = true
-            self.contentView = effect
+            // No custom contentView here: AppState.showPanel() assigns contentViewController,
+            // which replaces the window's contentView wholesale.
         }
     }
 

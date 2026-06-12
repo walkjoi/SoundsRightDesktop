@@ -37,17 +37,13 @@ targets:
     settings:
       SWIFT_VERSION: "5.9"
       SWIFT_STRICT_CONCURRENCY: complete
-      INFOPLIST_KEY_LSUIElement: YES
       PRODUCT_BUNDLE_IDENTIFIER: com.soundsright.desktop
       MACOSX_DEPLOYMENT_TARGET: "13.0"
       CODE_SIGN_IDENTITY: "Apple Development"
       CODE_SIGN_STYLE: Automatic
       DEVELOPMENT_TEAM: ""
-      IPHONEOS_DEPLOYMENT_TARGET: "13.0"
       SDKROOT: macosx
       SUPPORTED_PLATFORMS: "macosx"
-      TARGETED_DEVICE_FAMILY: "1,2"
-      VALID_ARCHS: "x86_64 arm64"
 
   SoundsRightTests:
     type: bundle.unit-test

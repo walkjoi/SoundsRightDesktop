@@ -1,6 +1,7 @@
 import SwiftUI
 import KeyboardShortcuts
 import ServiceManagement
+import os
 
 struct SettingsView: View {
     @ObservedObject var appState: AppState
@@ -67,6 +68,9 @@ private struct SettingsTab: View {
 struct GeneralSettingsTab: View {
     @ObservedObject var appState: AppState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var launchAtLoginMessage: String?
+
+    private static let logger = Logger(subsystem: "com.soundsright.desktop", category: "SettingsView")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -93,20 +97,49 @@ struct GeneralSettingsTab: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .onChange(of: launchAtLogin) { newValue in
-                            do {
-                                if newValue {
-                                    try SMAppService.mainApp.register()
-                                } else {
-                                    try SMAppService.mainApp.unregister()
-                                }
-                            } catch {
-                                launchAtLogin = !newValue
-                            }
+                            applyLaunchAtLogin(newValue)
                         }
+                }
+
+                if let launchAtLoginMessage {
+                    Text(launchAtLoginMessage)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 4)
                 }
             }
         }
         .padding(.top, 8)
+        // The settings window's hosting view is cached across opens, so .onAppear fires
+        // only once; re-sync with the system state whenever the window becomes key.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
+    }
+
+    /// Derives the toggle from `SMAppService.mainApp.status` after every change, so the UI
+    /// stays truthful and a failed call cannot oscillate the onChange handler.
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        let currentlyEnabled = SMAppService.mainApp.status == .enabled
+        guard enabled != currentlyEnabled else { return }
+
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginMessage = nil
+        } catch {
+            Self.logger.error("Launch at Login change failed: \(error.localizedDescription)")
+            launchAtLoginMessage = error.localizedDescription
+        }
+
+        if SMAppService.mainApp.status == .requiresApproval {
+            launchAtLoginMessage = "Approval needed: enable SoundsRight in System Settings → General → Login Items."
+        }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
 
@@ -195,8 +228,7 @@ struct PlaybackSettingsTab: View {
             SettingsSection(title: "Test") {
                 SettingsRow(label: "Preview voice") {
                     Button {
-                        appState.currentText = "Hello, I am SoundsRight."
-                        Task { await appState.playTTS() }
+                        appState.previewVoice()
                     } label: {
                         Label("Play", systemImage: "play.fill")
                             .font(.system(size: 11, weight: .medium))
@@ -333,7 +365,7 @@ private struct SpeedOptionRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(isSelected ? Color.accentColor.opacity(0.20) : Color.clear, lineWidth: 1)

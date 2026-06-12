@@ -17,7 +17,7 @@ struct PlaybackControls: View {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 22, height: 22)
-            } else if case .error = appState.ttsState {
+            } else if case .error(let message) = appState.ttsState {
                 Button(action: playAction) {
                     Image(systemName: "exclamationmark.circle")
                         .font(.system(size: 16, weight: .light))
@@ -25,7 +25,7 @@ struct PlaybackControls: View {
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
-                .help("Error — tap to retry")
+                .help("\(message) — tap to retry")
             } else {
                 Button(action: playAction) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")

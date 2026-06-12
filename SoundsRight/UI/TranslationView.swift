@@ -110,7 +110,7 @@ private struct AppleTranslationModifier: ViewModifier {
                     target: Locale.Language(identifier: "zh-Hans")
                 )
             }
-            .translationTask(config) { session in
+            .translationTask(config) { @Sendable session in
                 let pending = await MainActor.run { appState.pendingTranslation }
                 guard let pending else { return }
                 do {
@@ -136,7 +136,7 @@ private struct DictionaryTranslationModifier: ViewModifier {
                     target: Locale.Language(identifier: "zh-Hans")
                 )
             }
-            .translationTask(config) { session in
+            .translationTask(config) { @Sendable session in
                 let pending = await MainActor.run { appState.pendingDictionaryResult }
                 guard let pending else { return }
                 let requestID = pending.requestID

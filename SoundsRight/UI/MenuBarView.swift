@@ -49,8 +49,11 @@ struct MenuBarView: View {
     }
 
     private func quit() {
-        Task { await appState.shutdown() }
-        NSApplication.shared.terminate(nil)
+        // terminate(nil) never returns to the run loop, so shutdown must complete first.
+        Task { @MainActor in
+            await appState.shutdown()
+            NSApplication.shared.terminate(nil)
+        }
     }
 }
 

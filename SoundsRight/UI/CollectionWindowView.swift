@@ -152,7 +152,7 @@ private struct CollectionDetailPane: View {
         HStack(spacing: 10) {
             if case .loading = appState.ttsState {
                 ProgressView().controlSize(.small).frame(width: 22, height: 22)
-            } else if case .error = appState.ttsState {
+            } else if case .error(let message) = appState.ttsState {
                 Button(action: play) {
                     Image(systemName: "exclamationmark.circle")
                         .font(.system(size: 16, weight: .light))
@@ -160,7 +160,7 @@ private struct CollectionDetailPane: View {
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
-                .help("Error — tap to retry")
+                .help("\(message) — tap to retry")
             } else {
                 Button(action: play) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
@@ -228,7 +228,7 @@ private struct CollectionDetailPane: View {
         case .paused:
             appState.resumeTTS()
         default:
-            Task { await appState.playCollectionItem(text: item.sourceText) }
+            appState.playCollectionItem(text: item.sourceText)
         }
     }
 }

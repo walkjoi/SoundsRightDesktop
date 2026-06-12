@@ -72,6 +72,12 @@ final class CollectionStore: ObservableObject {
         try? FileManager.default.moveItem(at: fileURL, to: corrupt)
     }
 
+    /// Waits for all queued writes to land on disk. Each detached write awaits its
+    /// predecessor, so awaiting the latest one drains the whole chain.
+    func flush() async {
+        await pendingWrite?.value
+    }
+
     private func schedulePersist() {
         let snapshot = items
         let url = fileURL

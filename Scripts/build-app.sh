@@ -1,13 +1,18 @@
 #!/bin/bash
 # Builds SoundsRight.app using SwiftPM + Command Line Tools only (no Xcode,
-# no Apple Developer account). Output: build/SoundsRight.app, ad-hoc signed.
+# no Apple Developer account). Output: build.noindex/SoundsRight.app, ad-hoc
+# signed. The .noindex suffix keeps Spotlight/Launchpad from listing the build
+# artifact as a second "SoundsRight" alongside the installed copy.
 #
-# Usage: Scripts/build-app.sh [debug|release]   (default: release)
+# Usage: Scripts/build-app.sh [release]
+# The debug configuration does NOT build under Command Line Tools: SwiftPM
+# defines DEBUG there, which compiles the #if DEBUG-wrapped #Preview blocks,
+# and the SwiftUI previews macro plugin ships only with full Xcode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-APP="build/SoundsRight.app"
+APP="build.noindex/SoundsRight.app"
 
 swift build -c "$CONFIG"
 
@@ -31,6 +36,7 @@ for bundle in ".build/$CONFIG"/*.bundle; do
 done
 
 # Ad-hoc signature: required on Apple Silicon, needs no developer account.
-codesign --force --deep --sign - "$APP"
+# (No --deep: nested bundles are resource-only and need no signing of their own.)
+codesign --force --sign - "$APP"
 
 echo "Built: $APP"

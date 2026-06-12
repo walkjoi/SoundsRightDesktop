@@ -37,3 +37,4 @@ DerivedData/
 # Build products
 SoundsRight/Products/
 .build/
+build.noindex/

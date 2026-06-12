@@ -4,6 +4,17 @@ import os
 actor EdgeTTSService {
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "EdgeTTSService")
 
+    // One session for the actor's lifetime: avoids leaking un-invalidated sessions
+    // per call and reuses the TLS/WebSocket connection to the Edge endpoint.
+    private let session: URLSession
+
+    init() {
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.timeoutIntervalForRequest = AppConstants.edgeTTSIdleTimeout
+        sessionConfig.timeoutIntervalForResource = AppConstants.edgeTTSSynthesisDeadline
+        session = URLSession(configuration: sessionConfig)
+    }
+
     enum EdgeTTSError: LocalizedError {
         case connectionFailed(String)
         case synthesisTimedOut
@@ -38,9 +49,6 @@ actor EdgeTTSService {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
-        let sessionConfig = URLSessionConfiguration.default
-        sessionConfig.timeoutIntervalForRequest = 10
-        let session = URLSession(configuration: sessionConfig)
         let webSocket = session.webSocketTask(with: request)
         webSocket.resume()
 
@@ -90,6 +98,9 @@ actor EdgeTTSService {
             return audioBuffer
         } catch let error as EdgeTTSError {
             throw error
+        } catch let error as URLError where error.code == .timedOut {
+            logger.error("Edge TTS synthesis timed out")
+            throw EdgeTTSError.synthesisTimedOut
         } catch {
             let detail: String
             if let urlError = error as? URLError {

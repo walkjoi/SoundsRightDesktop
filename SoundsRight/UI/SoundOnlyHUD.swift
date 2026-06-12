@@ -12,15 +12,15 @@ struct SoundOnlyHUD: View {
                     ProgressView()
                         .controlSize(.small)
                         .frame(width: 26, height: 26)
-                } else if case .error = appState.ttsState {
-                    Button(action: { Task { await appState.playTTS() } }) {
+                } else if case .error(let message) = appState.ttsState {
+                    Button(action: { appState.togglePlayPause() }) {
                         Image(systemName: "exclamationmark.circle")
                             .font(.system(size: 14, weight: .light))
                             .foregroundStyle(.red.opacity(0.85))
                             .frame(width: 26, height: 26)
                     }
                     .buttonStyle(.plain)
-                    .help("Error — tap to retry")
+                    .help("\(message) — tap to retry")
                 } else {
                     Button(action: { appState.togglePlayPause() }) {
                         Image(systemName: isPlaying ? "pause.fill" : "play.fill")
@@ -78,7 +78,7 @@ struct SoundOnlyHUD: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .fixedSize()
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
     }
 
