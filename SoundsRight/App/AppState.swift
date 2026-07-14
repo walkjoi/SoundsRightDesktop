@@ -791,18 +791,11 @@ final class AppState: ObservableObject {
 
     // MARK: - Panel Management
 
-    /// Autosave name under which the translation panel's frame persists —
-    /// the panel has a fixed, user-controlled position, not a computed one.
-    private static let panelFrameAutosaveName = "TranslationPanel"
-
     private func showPanel() {
         logger.debug("Showing floating panel")
 
         if floatingPanel == nil {
-            let panel = FloatingPanel()
-            // The panel stays wherever the user last dragged it, across launches.
-            panel.setFrameAutosaveName(Self.panelFrameAutosaveName)
-            floatingPanel = panel
+            floatingPanel = FloatingPanel()
         }
 
         let requestID = currentRequestID
@@ -824,21 +817,16 @@ final class AppState: ObservableObject {
             return
         }
 
-        // Center exactly once — before the user has ever placed the panel.
-        // From then on the autosaved frame is the single source of position.
-        let needsInitialCentering = !panel.isVisible
-            && UserDefaults.standard.string(forKey: "NSWindow Frame \(Self.panelFrameAutosaveName)") == nil
         isPanelVisible = true
 
         DispatchQueue.main.async {
             let panelContent = TranslationView(appState: self)
             let hostingController = NSHostingController(rootView: panelContent)
             panel.contentViewController = hostingController
-            let initialSize = NSSize(width: 420, height: 180)
-            panel.setContentSize(initialSize)
-            if needsInitialCentering {
-                panel.center()
-            }
+            panel.setContentSize(NSSize(width: 420, height: 180))
+            // Fixed position: dead center, every show. Assigning the content
+            // view controller resizes the window, so centering must come after.
+            panel.center()
             // No NSApp.activate here: the panel is .nonactivatingPanel by design so the
             // source app keeps focus; makeKeyAndOrderFront is enough for Esc and clicks.
             panel.makeKeyAndOrderFront(nil)
@@ -877,11 +865,10 @@ final class AppState: ObservableObject {
                 width: max(420, min(fittedSize.width, targetWidth)),
                 height: max(170, fittedSize.height)
             )
-            // Keep the top-left corner fixed so the panel grows downward from
-            // its position instead of its title bar jumping upward.
-            let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+            // Re-center after the content-driven resize so the panel stays
+            // fixed at screen center regardless of how tall the result is.
             panel.setContentSize(contentSize)
-            panel.setFrameTopLeftPoint(topLeft)
+            panel.center()
         }
     }
 

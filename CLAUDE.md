@@ -1,6 +1,6 @@
 # SoundsRight Desktop
 
-macOS menu bar app (Swift 5.9, SwiftUI, macOS 13+) that reads the currently selected text aloud with Chinese translation. Two activation modes, each with a global hotkey: Translation (⌘⌥X, floating panel at a fixed user-controlled position persisted via frame autosave, transient unless pinned) and Sound Only (⌘⌥Z, compact HUD at the cursor, promotable to the full panel via its expand button). Both are also reachable from the menu bar dropdown, which additionally lists recent lookups. Uses XcodeGen (`project.yml`) to generate the Xcode project; a SwiftPM-based build path exists for machines without Xcode.
+macOS menu bar app (Swift 5.9, SwiftUI, macOS 13+) that reads the currently selected text aloud with Chinese translation. Two activation modes, each with a global hotkey: Translation (⌘⌥X, floating panel fixed at screen center, transient unless pinned) and Sound Only (⌘⌥Z, compact HUD at the cursor, promotable to the full panel via its expand button). Both are also reachable from the menu bar dropdown, which additionally lists recent lookups. Uses XcodeGen (`project.yml`) to generate the Xcode project; a SwiftPM-based build path exists for machines without Xcode.
 
 ## Build & Run
 
