@@ -61,8 +61,24 @@ struct SoundOnlyHUD: View {
             .buttonStyle(.plain)
             .help("Change speed")
 
+            if appState.isUsingFallbackVoice {
+                OfflineVoiceBadge()
+            }
+
             Divider()
                 .frame(height: 16)
+
+            // Expand: promote this session to the full translation panel.
+            // Same capture, same audio — translation starts on click.
+            Button(action: { appState.expandSoundOnlyToTranslation() }) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+            }
+            .buttonStyle(.plain)
+            .help("Show translation")
 
             // Dismiss
             Button(action: { appState.dismissSoundOnlyHUD() }) {

@@ -1,4 +1,5 @@
 import SwiftUI
+import KeyboardShortcuts
 import os
 
 enum TTSPlaybackState {
@@ -37,6 +38,17 @@ final class AppState: ObservableObject {
 
     @Published var isPanelVisible: Bool = false
 
+    /// True while the panel is pinned: it survives clicks outside and keeps
+    /// its position across activations instead of re-anchoring at the cursor.
+    @Published var isPanelPinned: Bool = false
+
+    /// True when the current selection exceeded `maxInputLength` and was cut.
+    @Published var wasInputTruncated: Bool = false
+
+    /// True while the offline AVSpeech fallback voice is what the user hears —
+    /// shown as a badge so the quality drop (and disabled loop) is explained.
+    @Published var isUsingFallbackVoice: Bool = false
+
     var hasAudioData: Bool { audioPlayer.hasAudioData }
 
     /// Incrementing this triggers the translation task in TranslationView (Apple Translation Framework)
@@ -70,6 +82,12 @@ final class AppState: ObservableObject {
     @AppStorage("playbackRate") var playbackRateRaw: Double = 1.0
     @AppStorage("playbackRateOptions") var playbackRateOptionsRaw: String =
         PlaybackRate.storageValue(for: PlaybackRate.defaultOptions)
+    @AppStorage("ttsVoice") var ttsVoiceRaw: String = AppConstants.defaultVoice.rawValue
+    @AppStorage("hasSeenWelcome") var hasSeenWelcome: Bool = false
+
+    var ttsVoice: TTSVoice {
+        TTSVoice(rawValue: ttsVoiceRaw) ?? AppConstants.defaultVoice
+    }
 
     var availablePlaybackRates: [PlaybackRate] {
         PlaybackRate.options(from: playbackRateOptionsRaw)
@@ -96,19 +114,27 @@ final class AppState: ObservableObject {
     let audioPlayer = AudioPlayer()
     let shortcutManager = ShortcutManager()
     let collectionStore = CollectionStore()
+    let recentLookupStore = RecentLookupStore()
 
     // MARK: - Panel Management
 
     private var floatingPanel: FloatingPanel?
     private var soundOnlyPanel: FloatingPanel?
+    private var toastPanel: FloatingPanel?
     private var settingsWindow: NSWindow?
     private var collectionWindow: NSWindow?
+    private var welcomeWindow: NSWindow?
     private var isInitialized = false
     private var lastActivationMode: ActivationMode = .translation
     private var hideSoundOnlyTask: Task<Void, Never>?
+    private var hideToastTask: Task<Void, Never>?
     private var restartPlaybackTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private var isPresentingAccessibilityAlert = false
+
+    /// Global + local mouse-down monitors that implement click-outside-dismisses
+    /// (Look Up-style transience). Installed while the panel is visible and unpinned.
+    private var outsideClickMonitors: [Any] = []
 
     /// Monotonic ID for playback intents (hotkey play, collection play, rate restart).
     /// Captured before `synthesize` and checked after, so a superseded synthesis
@@ -193,6 +219,12 @@ final class AppState: ObservableObject {
         )
 
         logger.info("Keyboard shortcuts registered")
+
+        // Teach the hotkeys and walk through the Accessibility grant *before*
+        // the first hotkey press can fail.
+        if !hasSeenWelcome {
+            showWelcomeWindow()
+        }
     }
 
     func shutdown() async {
@@ -214,9 +246,91 @@ final class AppState: ObservableObject {
         let requestID = currentRequestID
 
         logger.info("Activate triggered with mode: \(mode.rawValue), requestID: \(requestID)")
-        lastActivationMode = mode
+        await teardownActiveSession(for: mode)
 
-        // Clean up any active state from the previous activation
+        let selection: SelectionReader.Selection
+        switch await SelectionReader.readSelectedText() {
+        case .success(let captured):
+            selection = captured
+        case .failure(.noSelection):
+            logger.info("No text selected — telling the user")
+            showToast(
+                "No text selected — select some text, then press the shortcut",
+                style: .notice
+            )
+            return
+        case .failure(.readInProgress):
+            logger.info("Selection read already in progress — ignoring activation")
+            return
+        case .failure(.noPermission):
+            logger.warning("Accessibility permission missing — prompting user")
+            presentAccessibilityAlert()
+            return
+        case .failure(.eventCreationFailed):
+            logger.error("Could not synthesize Cmd+C event — telling the user")
+            showToast("Couldn't read the selection — try again", style: .notice)
+            return
+        }
+
+        guard requestID == currentRequestID else { return }
+
+        await beginSession(
+            text: selection.text,
+            truncated: selection.wasTruncated,
+            mode: mode,
+            requestID: requestID
+        )
+    }
+
+    /// Activation from a menu bar row: gives the menu window a beat to close so
+    /// key focus returns to the user's app before the synthetic ⌘C fires.
+    func activateFromMenu(mode: ActivationMode) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            await self.activate(mode: mode)
+        }
+    }
+
+    /// Re-opens a remembered lookup (menu bar → Recent) without touching the
+    /// user's current selection.
+    func presentRecentLookup(_ lookup: RecentLookup) {
+        Task { @MainActor in
+            self.currentRequestID += 1
+            let requestID = self.currentRequestID
+            await self.teardownActiveSession(for: .translation)
+            await self.beginSession(
+                text: lookup.text,
+                truncated: false,
+                mode: .translation,
+                requestID: requestID
+            )
+        }
+    }
+
+    /// Promotes a Sound-Only session to the full translation panel: same capture,
+    /// same audio (playback is deliberately left untouched), translation starts now.
+    func expandSoundOnlyToTranslation() {
+        guard !currentText.isEmpty else { return }
+        logger.info("Expanding sound-only session to translation panel")
+
+        lastActivationMode = .translation
+        hideSoundOnlyTask?.cancel()
+        hideSoundOnlyTask = nil
+        soundOnlyPanel?.orderOut(nil)
+
+        showPanel()
+        recentLookupStore.record(text: currentText)
+
+        let requestID = currentRequestID
+        Task { @MainActor in
+            await self.startTranslation(requestID: requestID)
+        }
+    }
+
+    /// Stops playback/tasks from the previous activation and hides its surfaces.
+    /// A pinned panel is left in place when the next session will reuse it.
+    private func teardownActiveSession(for mode: ActivationMode) async {
+        lastActivationMode = mode
         isLooping = false
         playbackGeneration += 1
         hideSoundOnlyTask?.cancel()
@@ -227,32 +341,21 @@ final class AppState: ObservableObject {
         playbackTask = nil
         audioPlayer.reset()
         await stopFallbackPlayback()
-        floatingPanel?.orderOut(nil)
-        isPanelVisible = false
-        soundOnlyPanel?.orderOut(nil)
-
-        let selectedText: String
-        switch await SelectionReader.readSelectedText() {
-        case .success(let text):
-            selectedText = text
-        case .failure(.noSelection):
-            logger.info("No text selected — ignoring activation")
-            return
-        case .failure(.readInProgress):
-            logger.info("Selection read already in progress — ignoring activation")
-            return
-        case .failure(.noPermission):
-            logger.warning("Accessibility permission missing — prompting user")
-            presentAccessibilityAlert()
-            return
-        case .failure(.eventCreationFailed):
-            logger.error("Could not synthesize Cmd+C event — ignoring activation")
-            return
+        if !(isPanelPinned && mode == .translation) {
+            hidePanel()
         }
+        soundOnlyPanel?.orderOut(nil)
+    }
 
-        guard requestID == currentRequestID else { return }
-
-        currentText = selectedText
+    /// Common entry for hotkey, menu, and recent-lookup activations once the
+    /// text is known: resets result state, shows the right surface, starts work.
+    private func beginSession(
+        text: String,
+        truncated: Bool,
+        mode: ActivationMode,
+        requestID: Int
+    ) async {
+        currentText = text
         translation = nil
         dictionaryResult = nil
         translationError = nil
@@ -261,6 +364,10 @@ final class AppState: ObservableObject {
         isTranslating = false
         isTranslatingDefinitions = false
         ttsState = .idle
+        wasInputTruncated = truncated
+        isUsingFallbackVoice = false
+
+        recentLookupStore.record(text: text)
 
         switch mode {
         case .translation:
@@ -271,6 +378,9 @@ final class AppState: ObservableObject {
             await startTranslation(requestID: requestID)
         case .soundOnly:
             showSoundOnlyHUD()
+            if truncated {
+                showToast("Reading the first \(AppConstants.maxInputLength) characters")
+            }
             startPlayback { await self.playTTS() }
         }
     }
@@ -308,10 +418,22 @@ final class AppState: ObservableObject {
         """
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn,
-           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
+        if alert.runModal() == .alertFirstButtonReturn {
+            openAccessibilitySettings()
         }
+    }
+
+    /// Opens System Settings → Privacy & Security → Accessibility.
+    func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Human-readable label for a registered hotkey, e.g. "⌥⌘X".
+    static func shortcutLabel(for name: KeyboardShortcuts.Name) -> String {
+        KeyboardShortcuts.getShortcut(for: name).map(String.init(describing:)) ?? "—"
     }
 
     // MARK: - Translation
@@ -343,6 +465,7 @@ final class AppState: ObservableObject {
                 } else {
                     dictionaryResult = result
                     isTranslating = false
+                    recentLookupStore.record(text: currentText, summary: result.meanings.first?.definition)
                     resizePanelToFitContent()
                 }
                 logger.info("Dictionary lookup succeeded")
@@ -380,6 +503,7 @@ final class AppState: ObservableObject {
         pendingTranslation = nil
         isTranslating = false
         translationError = nil
+        recentLookupStore.record(text: currentText, summary: text)
         logger.info("Translation succeeded")
     }
 
@@ -398,6 +522,10 @@ final class AppState: ObservableObject {
         dictionaryResult = result
         pendingDictionaryResult = nil
         isTranslatingDefinitions = false
+        recentLookupStore.record(
+            text: currentText,
+            summary: result.meanings.first.map { $0.translatedDefinition ?? $0.definition }
+        )
         resizePanelToFitContent()
         logger.info("Dictionary definitions translated")
     }
@@ -408,6 +536,7 @@ final class AppState: ObservableObject {
         dictionaryResult = fallback
         pendingDictionaryResult = nil
         isTranslatingDefinitions = false
+        recentLookupStore.record(text: currentText, summary: fallback.meanings.first?.definition)
         resizePanelToFitContent()
         logger.error("Dictionary translation failed, showing English-only: \(error.localizedDescription)")
     }
@@ -425,7 +554,7 @@ final class AppState: ObservableObject {
         audioPlayer.reset()
         await stopFallbackPlayback()
 
-        let result = await ttsManager.synthesize(text: currentText, rate: playbackRate)
+        let result = await ttsManager.synthesize(text: currentText, voice: ttsVoice, rate: playbackRate)
         guard generation == playbackGeneration, !Task.isCancelled else {
             // Superseded — if our synthesize already started fallback speech, silence
             // it (generation-scoped, so a newer utterance is never touched).
@@ -439,6 +568,7 @@ final class AppState: ObservableObject {
         case .audioData(let audioData):
             do {
                 try audioPlayer.play(data: audioData)
+                isUsingFallbackVoice = false
                 ttsState = .playing
                 logger.info("Audio playback started")
             } catch {
@@ -448,12 +578,28 @@ final class AppState: ObservableObject {
 
         case .fallbackUsed(let utteranceGeneration):
             activeFallbackGeneration = utteranceGeneration
+            isUsingFallbackVoice = true
             ttsState = .playing
             logger.info("Fallback TTS playback started")
 
         case .failed(let error):
-            ttsState = .error(error.localizedDescription)
+            ttsState = .error(Self.friendlyTTSMessage(for: error))
             logger.error("TTS synthesis failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Maps transport-level TTS failures to language a user can act on.
+    private static func friendlyTTSMessage(for error: Error) -> String {
+        switch error {
+        case EdgeTTSService.EdgeTTSError.connectionFailed:
+            return "Couldn't reach the voice service — check your internet connection"
+        case EdgeTTSService.EdgeTTSError.synthesisTimedOut:
+            return "The voice service took too long to respond"
+        case EdgeTTSService.EdgeTTSError.noAudioReceived,
+             EdgeTTSService.EdgeTTSError.unexpectedMessage:
+            return "The voice service returned no audio"
+        default:
+            return error.localizedDescription
         }
     }
 
@@ -583,7 +729,7 @@ final class AppState: ObservableObject {
         audioPlayer.reset()
         await stopFallbackPlayback()
 
-        let result = await ttsManager.synthesize(text: currentText, rate: playbackRate)
+        let result = await ttsManager.synthesize(text: currentText, voice: ttsVoice, rate: playbackRate)
         guard generation == playbackGeneration, !Task.isCancelled else {
             if case .fallbackUsed(let utteranceGeneration) = result {
                 await ttsManager.stopFallback(generation: utteranceGeneration)
@@ -596,6 +742,7 @@ final class AppState: ObservableObject {
             do {
                 try audioPlayer.play(data: audioData, loop: loop)
                 isLooping = loop
+                isUsingFallbackVoice = false
                 ttsState = .playing
                 logger.info("Restarted playback with updated rate")
             } catch {
@@ -607,12 +754,13 @@ final class AppState: ObservableObject {
         case .fallbackUsed(let utteranceGeneration):
             isLooping = false
             activeFallbackGeneration = utteranceGeneration
+            isUsingFallbackVoice = true
             ttsState = .playing
             logger.info("Fallback TTS playback restarted after rate change")
 
         case .failed(let error):
             isLooping = false
-            ttsState = .error(error.localizedDescription)
+            ttsState = .error(Self.friendlyTTSMessage(for: error))
             logger.error("TTS synthesis failed after rate change: \(error.localizedDescription)")
         }
     }
@@ -631,7 +779,13 @@ final class AppState: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.currentRequestID == requestID else { return }
                 self.stopTTS()
+                self.isPanelVisible = false
+                self.isPanelPinned = false
+                self.removeOutsideClickMonitors()
             }
+        }
+        floatingPanel?.onKeyCommand = { [weak self] command in
+            self?.handlePanelKeyCommand(command) ?? false
         }
 
         guard let panel = floatingPanel else {
@@ -639,18 +793,41 @@ final class AppState: ObservableObject {
             return
         }
 
+        // A pinned, already-visible panel keeps its place; otherwise it anchors
+        // at the cursor — feedback belongs where the user is already looking.
+        let shouldAnchorAtCursor = !(isPanelPinned && panel.isVisible)
         isPanelVisible = true
 
         DispatchQueue.main.async {
             let panelContent = TranslationView(appState: self)
             let hostingController = NSHostingController(rootView: panelContent)
             panel.contentViewController = hostingController
-            panel.setContentSize(NSSize(width: 420, height: 180))
-            panel.center()
+            let initialSize = NSSize(width: 420, height: 180)
+            panel.setContentSize(initialSize)
+            if shouldAnchorAtCursor {
+                Self.position(panel, nearCursorWithSize: initialSize, offset: NSPoint(x: 14, y: -14))
+            }
             // No NSApp.activate here: the panel is .nonactivatingPanel by design so the
             // source app keeps focus; makeKeyAndOrderFront is enough for Esc and clicks.
             panel.makeKeyAndOrderFront(nil)
+            self.installOutsideClickMonitorsIfNeeded()
         }
+    }
+
+    /// Places `panel` next to the mouse (below for negative y offsets), clamped
+    /// to the screen's visible frame — the same placement the HUD uses.
+    private static func position(_ panel: NSPanel, nearCursorWithSize size: NSSize, offset: NSPoint) {
+        let mouse = NSEvent.mouseLocation
+        var origin = NSPoint(
+            x: mouse.x + offset.x,
+            y: offset.y < 0 ? mouse.y - size.height + offset.y : mouse.y + offset.y
+        )
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            origin.x = max(visible.minX + 8, min(origin.x, visible.maxX - size.width - 8))
+            origin.y = max(visible.minY + 8, min(origin.y, visible.maxY - size.height - 8))
+        }
+        panel.setFrameOrigin(origin)
     }
 
     private func resizePanelToFitContent() {
@@ -668,7 +845,11 @@ final class AppState: ObservableObject {
                 width: max(420, min(fittedSize.width, targetWidth)),
                 height: max(170, fittedSize.height)
             )
+            // Keep the top-left corner fixed so a panel anchored below the
+            // selection grows downward, away from the text being read.
+            let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
             panel.setContentSize(contentSize)
+            panel.setFrameTopLeftPoint(topLeft)
         }
     }
 
@@ -676,12 +857,171 @@ final class AppState: ObservableObject {
         logger.debug("Hiding floating panel")
         floatingPanel?.orderOut(nil)
         isPanelVisible = false
+        isPanelPinned = false
+        removeOutsideClickMonitors()
     }
 
     func dismiss() {
         logger.info("Dismissing panel and stopping playback")
         stopTTS()
         hidePanel()
+    }
+
+    // MARK: - Panel Pinning & Transience
+
+    func togglePanelPin() {
+        isPanelPinned.toggle()
+        logger.info("Panel pin toggled: \(self.isPanelPinned)")
+        if isPanelPinned {
+            removeOutsideClickMonitors()
+        } else {
+            installOutsideClickMonitorsIfNeeded()
+        }
+    }
+
+    /// Look Up-style transience: while the panel is visible and unpinned, any
+    /// mouse-down outside it dismisses it. The global monitor covers clicks in
+    /// other apps; the local one covers clicks in our own windows.
+    private func installOutsideClickMonitorsIfNeeded() {
+        guard outsideClickMonitors.isEmpty, isPanelVisible, !isPanelPinned else { return }
+
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+        if let globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] _ in
+            // Global monitor handlers are documented to run on the main thread.
+            MainActor.assumeIsolated {
+                self?.dismissPanelIfClickedOutside(at: NSEvent.mouseLocation, window: nil)
+            }
+        }) {
+            outsideClickMonitors.append(globalMonitor)
+        }
+
+        if let localMonitor = NSEvent.addLocalMonitorForEvents(matching: events, handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.dismissPanelIfClickedOutside(at: NSEvent.mouseLocation, window: event.window)
+            }
+            return event
+        }) {
+            outsideClickMonitors.append(localMonitor)
+        }
+    }
+
+    private func removeOutsideClickMonitors() {
+        for monitor in outsideClickMonitors {
+            NSEvent.removeMonitor(monitor)
+        }
+        outsideClickMonitors.removeAll()
+    }
+
+    private func dismissPanelIfClickedOutside(at location: NSPoint, window: NSWindow?) {
+        guard isPanelVisible, !isPanelPinned, let panel = floatingPanel else { return }
+        if let window, window === panel { return }
+        guard !panel.frame.contains(location) else { return }
+        logger.debug("Click outside panel — dismissing")
+        dismiss()
+    }
+
+    // MARK: - Toast
+
+    /// Shows a transient, non-interactive capsule near the cursor. Used whenever
+    /// an activation can't do what was asked — a hotkey press must never
+    /// resolve to nothing — and for small confirmations ("Copied").
+    func showToast(_ message: String, style: ToastView.Style = .info) {
+        hideToastTask?.cancel()
+        hideToastTask = nil
+
+        if toastPanel == nil {
+            let panel = FloatingPanel(contentSize: NSSize(width: 220, height: 36), borderless: true)
+            panel.ignoresMouseEvents = true
+            toastPanel = panel
+        }
+        guard let panel = toastPanel else { return }
+
+        let hostingView = NSHostingView(rootView: ToastView(message: message, style: style))
+        panel.contentView = hostingView
+        let size = hostingView.fittingSize
+        panel.setContentSize(size)
+        // Above-right of the cursor, so it never collides with the HUD (below-right).
+        Self.position(panel, nearCursorWithSize: size, offset: NSPoint(x: 12, y: 16))
+        panel.alphaValue = 1
+        panel.orderFront(nil)
+
+        hideToastTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(AppConstants.toastDisplayDuration * 1_000_000_000))
+            guard !Task.isCancelled, let panel = self?.toastPanel else { return }
+            panel.animator().alphaValue = 0
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+        }
+    }
+
+    // MARK: - Panel Keyboard Commands
+
+    /// Plain-key vocabulary while the panel is key: Space play/pause, L loop,
+    /// S save, C copy, 1–5 direct speed. Returns false when the command doesn't
+    /// apply so the key falls through.
+    private func handlePanelKeyCommand(_ command: PanelKeyCommand) -> Bool {
+        switch command {
+        case .togglePlayPause:
+            togglePlayPause()
+            return true
+        case .toggleLoop:
+            guard hasAudioData else { return false }
+            toggleLoop()
+            return true
+        case .toggleSave:
+            guard canSaveCurrentToCollection || isCurrentSavedInCollection else { return false }
+            toggleSaveCurrentToCollection()
+            return true
+        case .copyTranslation:
+            guard canCopyTranslation else { return false }
+            copyTranslationToClipboard()
+            return true
+        case .setRate(let index):
+            let rates = PlaybackRate.allCases
+            guard (1...rates.count).contains(index) else { return false }
+            setPlaybackRate(rates[index - 1])
+            return true
+        }
+    }
+
+    // MARK: - Copy Translation
+
+    var canCopyTranslation: Bool {
+        translation != nil || dictionaryResult != nil
+    }
+
+    /// Copies the visible result: the sentence translation, or the dictionary
+    /// entry as "word / phonetics / part-of-speech: definition — 中文" lines.
+    func copyTranslationToClipboard() {
+        let text: String?
+        if let dictionary = dictionaryResult {
+            var lines: [String] = [dictionary.word]
+            if !dictionary.phonetics.isEmpty {
+                lines.append(dictionary.phonetics.joined(separator: "  "))
+            }
+            for meaning in dictionary.meanings {
+                var line = "\(meaning.partOfSpeech): \(meaning.definition)"
+                if let translated = meaning.translatedDefinition {
+                    line += " — \(translated)"
+                }
+                lines.append(line)
+            }
+            text = lines.joined(separator: "\n")
+        } else if let translation {
+            text = translation.translated
+        } else {
+            text = nil
+        }
+
+        guard let text else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        logger.info("Copied translation to clipboard")
+        showToast("Copied")
     }
 
     // MARK: - Sound Only HUD
@@ -740,7 +1080,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Settings Window
+    // MARK: - Welcome Guide
+
+    func showWelcomeWindow() {
+        if welcomeWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Welcome to SoundsRight"
+            window.contentView = NSHostingView(rootView: WelcomeView(appState: self))
+            window.center()
+            window.isReleasedWhenClosed = false
+            welcomeWindow = window
+        }
+        activateApp()
+        welcomeWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Called by the welcome guide's "Get Started" button.
+    func finishWelcome() {
+        hasSeenWelcome = true
+        welcomeWindow?.orderOut(nil)
+    }
 
     // MARK: - Collection
 
@@ -807,7 +1171,7 @@ final class AppState: ObservableObject {
 
         ttsState = .loading
 
-        let result = await ttsManager.synthesize(text: text, rate: playbackRate)
+        let result = await ttsManager.synthesize(text: text, voice: ttsVoice, rate: playbackRate)
         guard generation == playbackGeneration, !Task.isCancelled else {
             if case .fallbackUsed(let utteranceGeneration) = result {
                 await ttsManager.stopFallback(generation: utteranceGeneration)
@@ -819,6 +1183,7 @@ final class AppState: ObservableObject {
         case .audioData(let audioData):
             do {
                 try audioPlayer.play(data: audioData)
+                isUsingFallbackVoice = false
                 ttsState = .playing
             } catch {
                 ttsState = .error(error.localizedDescription)
@@ -826,9 +1191,10 @@ final class AppState: ObservableObject {
             }
         case .fallbackUsed(let utteranceGeneration):
             activeFallbackGeneration = utteranceGeneration
+            isUsingFallbackVoice = true
             ttsState = .playing
         case .failed(let error):
-            ttsState = .error(error.localizedDescription)
+            ttsState = .error(Self.friendlyTTSMessage(for: error))
             logger.error("Collection TTS synthesis failed: \(error.localizedDescription)")
         }
     }

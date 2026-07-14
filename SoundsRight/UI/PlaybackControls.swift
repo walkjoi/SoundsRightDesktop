@@ -66,7 +66,22 @@ struct PlaybackControls: View {
             .buttonStyle(.plain)
             .help("Change speed")
 
+            if appState.isUsingFallbackVoice {
+                OfflineVoiceBadge()
+            }
+
             Spacer(minLength: 0)
+
+            // Copy translation
+            Button(action: { appState.copyTranslationToClipboard() }) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .disabled(!appState.canCopyTranslation)
+            .help("Copy translation (C)")
 
             // Save to collection
             Button(action: { appState.toggleSaveCurrentToCollection() }) {
@@ -80,8 +95,22 @@ struct PlaybackControls: View {
                     )
             }
             .buttonStyle(.plain)
-            .disabled(!appState.canSaveCurrentToCollection)
-            .help(isSaved ? "Remove from collection" : "Save to collection")
+            .disabled(!appState.canSaveCurrentToCollection && !isSaved)
+            .help(isSaved ? "Remove from collection (S)" : "Save to collection (S)")
+
+            // Pin: keeps the panel up (clicks outside no longer dismiss it)
+            Button(action: { appState.togglePanelPin() }) {
+                Image(systemName: appState.isPanelPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(appState.isPanelPinned ? Color.accentColor : Color.secondary)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        appState.isPanelPinned ? Color.accentColor.opacity(0.12) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(appState.isPanelPinned ? "Unpin — click outside to dismiss" : "Pin panel")
         }
     }
 
@@ -101,6 +130,20 @@ struct PlaybackControls: View {
 
     private func playAction() {
         appState.togglePlayPause()
+    }
+}
+
+/// Explains the audible quality drop when the AVSpeech fallback is speaking
+/// (and why loop/replay are unavailable — fallback speech has no audio data).
+struct OfflineVoiceBadge: View {
+    var body: some View {
+        Text("Offline voice")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.orange.opacity(0.12), in: Capsule())
+            .help("The online voice couldn't be reached — using the built-in macOS voice. Loop and replay are unavailable.")
     }
 }
 

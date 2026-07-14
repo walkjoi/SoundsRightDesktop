@@ -6,6 +6,13 @@ import os
 struct SelectionReader {
     private static let logger = Logger(subsystem: "com.soundsright.desktop", category: "SelectionReader")
 
+    /// A captured selection. `wasTruncated` is true when the original selection
+    /// exceeded `AppConstants.maxInputLength` so callers can tell the user.
+    struct Selection {
+        let text: String
+        let wasTruncated: Bool
+    }
+
     enum SelectionError: LocalizedError {
         case noPermission
         case eventCreationFailed
@@ -34,7 +41,7 @@ struct SelectionReader {
     /// Reads the currently selected text by simulating Cmd+C and checking if the clipboard changed.
     /// The user's previous clipboard contents are restored afterwards.
     @MainActor
-    static func readSelectedText() async -> Result<String, SelectionError> {
+    static func readSelectedText() async -> Result<Selection, SelectionError> {
         guard !isReading else {
             return .failure(.readInProgress)
         }
@@ -79,7 +86,10 @@ struct SelectionReader {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failure(.noSelection) }
 
-        return .success(String(trimmed.prefix(AppConstants.maxInputLength)))
+        return .success(Selection(
+            text: String(trimmed.prefix(AppConstants.maxInputLength)),
+            wasTruncated: trimmed.count > AppConstants.maxInputLength
+        ))
     }
 
     @MainActor
@@ -179,6 +189,11 @@ struct SelectionReader {
     }
 
     // MARK: - Permission
+
+    /// Current state of the Accessibility grant, without prompting.
+    static var isAccessibilityGranted: Bool {
+        AXIsProcessTrusted()
+    }
 
     static func ensureAccessibilityPermission() {
         // Literal key string instead of kAXTrustedCheckOptionPrompt: the imported

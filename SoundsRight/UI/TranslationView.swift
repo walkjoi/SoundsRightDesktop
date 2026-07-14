@@ -25,6 +25,15 @@ struct TranslationView: View {
             // Playback controls — clearly under the English text
             PlaybackControls(appState: appState)
 
+            if appState.wasInputTruncated {
+                Label(
+                    "Reading the first \(AppConstants.maxInputLength) characters of your selection",
+                    systemImage: "scissors"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+            }
+
             // Separator
             Color.primary.opacity(0.07)
                 .frame(height: 1)

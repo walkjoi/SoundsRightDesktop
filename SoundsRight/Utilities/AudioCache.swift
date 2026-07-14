@@ -41,7 +41,7 @@ actor AudioCache {
         cacheStorage.removeAll()
     }
 
-    static func cacheKey(text: String, rate: PlaybackRate) -> String {
-        return "\(text)|\(rate.rawValue)"
+    static func cacheKey(text: String, voice: TTSVoice, rate: PlaybackRate) -> String {
+        return "\(text)|\(voice.rawValue)|\(rate.rawValue)"
     }
 }

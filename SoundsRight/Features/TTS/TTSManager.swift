@@ -25,10 +25,10 @@ actor TTSManager {
         await fallbackTTS.setOnFinished(handler)
     }
 
-    func synthesize(text: String, rate: PlaybackRate) async -> TTSResult {
+    func synthesize(text: String, voice: TTSVoice, rate: PlaybackRate) async -> TTSResult {
         synthesisGeneration += 1
         let synthesisID = synthesisGeneration
-        let cacheKey = AudioCache.cacheKey(text: text, rate: rate)
+        let cacheKey = AudioCache.cacheKey(text: text, voice: voice, rate: rate)
 
         if let cachedAudio = await cache.get(cacheKey) {
             logger.debug("Cache hit for text synthesis")
@@ -36,7 +36,7 @@ actor TTSManager {
         }
 
         do {
-            let audioData = try await edgeTTS.synthesize(text: text, voice: .avaNeural, rate: rate)
+            let audioData = try await edgeTTS.synthesize(text: text, voice: voice, rate: rate)
 
             await cache.set(cacheKey, audioData)
             logger.info("Edge TTS synthesis succeeded")

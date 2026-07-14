@@ -109,6 +109,17 @@ struct GeneralSettingsTab: View {
                         .padding(.bottom, 4)
                 }
             }
+
+            SettingsSection(title: "Help") {
+                SettingsRow(label: "Welcome guide") {
+                    Button("Show") {
+                        appState.showWelcomeWindow()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
         }
         .padding(.top, 8)
         // The settings window's hosting view is cached across opens, so .onAppear fires
@@ -225,7 +236,19 @@ struct PlaybackSettingsTab: View {
                 .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12))
             }
 
-            SettingsSection(title: "Test") {
+            SettingsSection(title: "Voice") {
+                SettingsRow(label: "Speaking voice") {
+                    Picker("", selection: $appState.ttsVoiceRaw) {
+                        ForEach(TTSVoice.allCases) { voice in
+                            Text(voice.displayName).tag(voice.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(width: 160)
+                }
+
                 SettingsRow(label: "Preview voice") {
                     Button {
                         appState.previewVoice()

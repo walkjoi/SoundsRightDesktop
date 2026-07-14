@@ -1,8 +1,10 @@
 import Foundation
 
-enum TTSVoice: String, CaseIterable {
+enum TTSVoice: String, CaseIterable, Identifiable {
     case avaNeural = "en-US-AvaNeural"
     case emmaMultilingualNeural = "en-US-EmmaMultilingualNeural"
+
+    var id: String { rawValue }
 
     var displayName: String {
         switch self {
@@ -94,4 +96,10 @@ enum AppConstants {
     static let pasteboardCopyTimeoutNanoseconds: UInt64 = 500_000_000
     static let audioCacheMaxEntries = 20
     static let defaultVoice = TTSVoice.avaNeural
+    /// How many automatic history entries to keep (menu bar → Recent).
+    static let recentLookupsMaxEntries = 20
+    /// How many recent lookups the menu bar dropdown shows.
+    static let recentLookupsMenuLimit = 4
+    /// How long a transient toast stays on screen before fading out.
+    static let toastDisplayDuration: TimeInterval = 1.6
 }
