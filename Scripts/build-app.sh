@@ -52,8 +52,16 @@ if command -v iconutil >/dev/null && [ -e "$ICONSET_SRC/AppIcon-512x512@2x.png" 
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist"
 fi
 
-# Ad-hoc signature: required on Apple Silicon, needs no developer account.
+# Prefer the stable self-signed identity (create it once with
+# Scripts/setup-signing.sh): TCC pins the Accessibility grant to the signer,
+# so identity-signed rebuilds keep the grant while ad-hoc ones lose it.
 # (No --deep: nested bundles are resource-only and need no signing of their own.)
-codesign --force --sign - "$APP"
+SIGN_IDENTITY="-"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "SoundsRight Dev"; then
+    SIGN_IDENTITY="SoundsRight Dev"
+elif security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development"; then
+    SIGN_IDENTITY="Apple Development"
+fi
+codesign --force --sign "$SIGN_IDENTITY" "$APP"
 
-echo "Built: $APP"
+echo "Built: $APP (signed: $SIGN_IDENTITY)"
