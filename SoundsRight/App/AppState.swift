@@ -124,6 +124,7 @@ final class AppState: ObservableObject {
     private var settingsWindow: NSWindow?
     private var collectionWindow: NSWindow?
     private var welcomeWindow: NSWindow?
+    private var welcomeCloseObserver: NSObjectProtocol?
     private var isInitialized = false
     private var lastActivationMode: ActivationMode = .translation
     private var hideSoundOnlyTask: Task<Void, Never>?
@@ -172,7 +173,14 @@ final class AppState: ObservableObject {
 
         logger.info("Initializing app state")
 
-        SelectionReader.ensureAccessibilityPermission()
+        // On the very first run the welcome window drives the Accessibility
+        // grant — firing the system prompt here too would put two competing
+        // permission UIs on screen at once. (The prompting call is still what
+        // registers the app in the Accessibility list, so the welcome's
+        // "Open System Settings" button triggers it via requestAccessibilityAccess.)
+        if hasSeenWelcome {
+            SelectionReader.ensureAccessibilityPermission()
+        }
 
         // Update ttsState when audio finishes playing naturally
         audioPlayer.onFinished = { [weak self] in
@@ -408,6 +416,11 @@ final class AppState: ObservableObject {
         isPresentingAccessibilityAlert = true
         defer { isPresentingAccessibilityAlert = false }
 
+        // Accessory (LSUIElement) apps aren't active when a global hotkey fires;
+        // without activating first the alert can appear unfocused behind the
+        // frontmost app — invisible, while the guard above swallows retries.
+        activateApp()
+
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Accessibility Permission Required"
@@ -415,12 +428,23 @@ final class AppState: ObservableObject {
         SoundsRight reads the selected text by simulating Cmd+C, which needs \
         Accessibility access. Enable SoundsRight in System Settings → \
         Privacy & Security → Accessibility, then press the shortcut again.
+
+        If SoundsRight already appears enabled in the list, toggle it off and \
+        back on — the grant is tied to the exact build of the app.
         """
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
-            openAccessibilitySettings()
+            requestAccessibilityAccess()
         }
+    }
+
+    /// Registers the app with TCC (the prompting check is the only public API
+    /// that adds it to the Accessibility list) and opens the pane — so the list
+    /// the user lands in actually contains SoundsRight, even on a first run.
+    func requestAccessibilityAccess() {
+        SelectionReader.ensureAccessibilityPermission()
+        openAccessibilitySettings()
     }
 
     /// Opens System Settings → Privacy & Security → Accessibility.
@@ -1085,7 +1109,7 @@ final class AppState: ObservableObject {
     func showWelcomeWindow() {
         if welcomeWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 512),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
@@ -1095,6 +1119,19 @@ final class AppState: ObservableObject {
             window.center()
             window.isReleasedWhenClosed = false
             welcomeWindow = window
+
+            // The red close button must count as "done" too — only the
+            // Get Started button sets hasSeenWelcome otherwise, and a guide
+            // that reopens on every launch reads as the app forgetting state.
+            welcomeCloseObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.hasSeenWelcome = true
+                }
+            }
         }
         activateApp()
         welcomeWindow?.makeKeyAndOrderFront(nil)

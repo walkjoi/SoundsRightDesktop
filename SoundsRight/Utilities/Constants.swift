@@ -102,4 +102,7 @@ enum AppConstants {
     static let recentLookupsMenuLimit = 4
     /// How long a transient toast stays on screen before fading out.
     static let toastDisplayDuration: TimeInterval = 1.6
+    /// Distributed notification tccd posts when the accessibility trust table
+    /// changes — the live signal that the user just granted/revoked access.
+    static let accessibilityTrustChangedNotification = "com.apple.accessibility.api"
 }

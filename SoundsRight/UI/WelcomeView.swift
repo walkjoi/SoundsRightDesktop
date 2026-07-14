@@ -31,11 +31,18 @@ struct WelcomeView: View {
 
                         if !isAccessibilityGranted {
                             Button("Open System Settings") {
-                                appState.openAccessibilitySettings()
+                                appState.requestAccessibilityAccess()
                             }
                             .buttonStyle(.link)
                             .font(.system(size: 12))
                         }
+                    }
+
+                    if !isAccessibilityGranted {
+                        Text("Already enabled in the list? Toggle it off and back on — the grant is tied to the exact build of the app.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -79,11 +86,25 @@ struct WelcomeView: View {
             }
         }
         .padding(24)
-        .frame(width: 460, height: 480)
+        .frame(width: 460, height: 512)
         .background(.background)
         // Re-check the grant whenever the user returns from System Settings.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isAccessibilityGranted = SelectionReader.isAccessibilityGranted
+        }
+        // Live update: tccd broadcasts this when the trust table changes, so the
+        // status flips the moment the user toggles the switch in System Settings —
+        // without them having to click back on this window. Re-check after a short
+        // delay because the notification can precede the table commit.
+        .onReceive(
+            DistributedNotificationCenter.default().publisher(
+                for: Notification.Name(AppConstants.accessibilityTrustChangedNotification)
+            )
+        ) { _ in
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                isAccessibilityGranted = SelectionReader.isAccessibilityGranted
+            }
         }
     }
 
