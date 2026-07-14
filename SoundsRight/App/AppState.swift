@@ -49,6 +49,11 @@ final class AppState: ObservableObject {
     /// shown as a badge so the quality drop (and disabled loop) is explained.
     @Published var isUsingFallbackVoice: Bool = false
 
+    /// Index (into the whitespace-separated words of `currentText`) of the word
+    /// currently being spoken — drives read-along highlighting. Nil when idle,
+    /// between playbacks, or when the audio came without word timings.
+    @Published private(set) var spokenWordIndex: Int?
+
     var hasAudioData: Bool { audioPlayer.hasAudioData }
 
     /// Incrementing this triggers the translation task in TranslationView (Apple Translation Framework)
@@ -147,6 +152,11 @@ final class AppState: ObservableObject {
     /// attributed to the exact utterance instead of a racy Bool.
     private var activeFallbackGeneration: Int?
 
+    /// Word timings for the audio currently loaded in the player. Outlives the
+    /// tracking task so loop/replay of the same audio can re-track.
+    private var currentWordBoundaries: [WordBoundary] = []
+    private var readAlongTask: Task<Void, Never>?
+
     // MARK: - Logger
 
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "AppState")
@@ -182,6 +192,8 @@ final class AppState: ObservableObject {
         audioPlayer.onFinished = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                // Boundaries are kept so a loop/replay of the same audio re-tracks.
+                self.stopReadAlongTracking()
                 if case .playing = self.ttsState {
                     self.ttsState = .finished
                     if self.lastActivationMode == .soundOnly && !self.isLooping {
@@ -345,6 +357,7 @@ final class AppState: ObservableObject {
         playbackTask?.cancel()
         playbackTask = nil
         audioPlayer.reset()
+        stopReadAlong()
         await stopFallbackPlayback()
         if !(isPanelPinned && mode == .translation) {
             hidePanel()
@@ -575,6 +588,7 @@ final class AppState: ObservableObject {
         // Clear stale audio so loop/replay affordances stay disabled while a fresh
         // synthesis (possibly fallback speech with no data) is in flight.
         audioPlayer.reset()
+        stopReadAlong()
         await stopFallbackPlayback()
 
         let result = await ttsManager.synthesize(text: currentText, voice: ttsVoice, rate: playbackRate)
@@ -593,6 +607,7 @@ final class AppState: ObservableObject {
                 try audioPlayer.play(data: audio.data)
                 isUsingFallbackVoice = false
                 ttsState = .playing
+                startReadAlong(with: audio.wordBoundaries)
                 logger.info("Audio playback started")
             } catch {
                 ttsState = .error(error.localizedDescription)
@@ -608,6 +623,72 @@ final class AppState: ObservableObject {
         case .failed(let error):
             ttsState = .error(Self.friendlyTTSMessage(for: error))
             logger.error("TTS synthesis failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Read-Along
+
+    /// Begins highlighting words in step with the audio the panel just started.
+    private func startReadAlong(with boundaries: [WordBoundary]) {
+        currentWordBoundaries = boundaries
+        startReadAlongTracking()
+    }
+
+    /// (Re)starts the polling task over the retained boundaries — used directly
+    /// when looping replays audio whose timings we already hold.
+    private func startReadAlongTracking() {
+        readAlongTask?.cancel()
+        readAlongTask = nil
+        spokenWordIndex = nil
+        guard !currentWordBoundaries.isEmpty else { return }
+
+        readAlongTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.updateSpokenWordIndex()
+                try? await Task.sleep(nanoseconds: 60_000_000)
+            }
+        }
+    }
+
+    /// Stops highlight updates but keeps the timings for a later loop/replay.
+    private func stopReadAlongTracking() {
+        readAlongTask?.cancel()
+        readAlongTask = nil
+        spokenWordIndex = nil
+    }
+
+    /// Full teardown: the loaded audio (and thus its timings) is going away.
+    private func stopReadAlong() {
+        stopReadAlongTracking()
+        currentWordBoundaries = []
+    }
+
+    private func updateSpokenWordIndex() {
+        guard !currentWordBoundaries.isEmpty else { return }
+        let time = audioPlayer.currentTime
+
+        // Last word whose start we've passed. Recomputed from scratch each tick
+        // so looped playback (currentTime wrapping to 0) re-tracks naturally.
+        var newIndex: Int?
+        for (index, boundary) in currentWordBoundaries.enumerated() {
+            if time >= boundary.time {
+                newIndex = index
+            } else {
+                break
+            }
+        }
+
+        // Clear the highlight once the final word has finished sounding.
+        if let index = newIndex, index == currentWordBoundaries.count - 1 {
+            let boundary = currentWordBoundaries[index]
+            if time > boundary.time + max(boundary.duration, 0.05) + 0.25 {
+                newIndex = nil
+            }
+        }
+
+        if spokenWordIndex != newIndex {
+            spokenWordIndex = newIndex
         }
     }
 
@@ -668,6 +749,7 @@ final class AppState: ObservableObject {
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil
         audioPlayer.stop()
+        stopReadAlong()
         activeFallbackGeneration = nil
         Task { await ttsManager.stopPlayback() }
         ttsState = .idle
@@ -678,6 +760,8 @@ final class AppState: ObservableObject {
             logger.info("Stopping loop")
             isLooping = false
             audioPlayer.stop()
+            // Keep the boundaries: the audio data is still loaded for replay.
+            stopReadAlongTracking()
             ttsState = .idle
         } else {
             // Looping replays buffered audio data; fallback speech has none.
@@ -687,6 +771,7 @@ final class AppState: ObservableObject {
                 try audioPlayer.replayLooping()
                 isLooping = true
                 ttsState = .playing
+                startReadAlongTracking()
             } catch {
                 ttsState = .error(error.localizedDescription)
                 logger.error("Loop failed: \(error.localizedDescription)")
@@ -750,6 +835,7 @@ final class AppState: ObservableObject {
 
         ttsState = .loading
         audioPlayer.reset()
+        stopReadAlong()
         await stopFallbackPlayback()
 
         let result = await ttsManager.synthesize(text: currentText, voice: ttsVoice, rate: playbackRate)
@@ -767,6 +853,7 @@ final class AppState: ObservableObject {
                 isLooping = loop
                 isUsingFallbackVoice = false
                 ttsState = .playing
+                startReadAlong(with: audio.wordBoundaries)
                 logger.info("Restarted playback with updated rate")
             } catch {
                 isLooping = false
@@ -1197,6 +1284,9 @@ final class AppState: ObservableObject {
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil
         audioPlayer.reset()
+        // Collection audio plays without read-along: the panel's text (if any)
+        // is not what this audio speaks.
+        stopReadAlong()
         await stopFallbackPlayback()
 
         ttsState = .loading

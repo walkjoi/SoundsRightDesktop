@@ -11,9 +11,10 @@ struct TranslationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !isSingleWordSelection {
-                // Original text — secondary, context only, scrollable when long
+                // Original text — secondary, context only, scrollable when long.
+                // The word currently being spoken is highlighted (read-along).
                 ScrollView(.vertical, showsIndicators: false) {
-                    Text(appState.currentText)
+                    Text(highlightedSourceText)
                         .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -47,6 +48,46 @@ struct TranslationView: View {
         .frame(minWidth: 420, maxWidth: 560)
         .appleTranslationTask(appState: appState)
         .dictionaryTranslationTask(appState: appState)
+    }
+
+    /// The source text with the currently spoken word emphasized. Words are
+    /// mapped positionally: the nth Edge word boundary highlights the nth
+    /// whitespace-separated token; a mismatch simply drops the highlight.
+    private var highlightedSourceText: AttributedString {
+        let text = appState.currentText
+        guard let wordIndex = appState.spokenWordIndex,
+              let range = Self.wordRange(in: text, wordIndex: wordIndex)
+        else {
+            return AttributedString(text)
+        }
+
+        let before = AttributedString(String(text[text.startIndex..<range.lowerBound]))
+        var spoken = AttributedString(String(text[range]))
+        spoken.backgroundColor = Color.accentColor.opacity(0.22)
+        spoken.foregroundColor = Color.primary
+        let after = AttributedString(String(text[range.upperBound...]))
+        return before + spoken + after
+    }
+
+    /// Range of the nth whitespace-separated token of `text`.
+    private static func wordRange(in text: String, wordIndex: Int) -> Range<String.Index>? {
+        var tokenIndex = 0
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            while cursor < text.endIndex, text[cursor].isWhitespace {
+                cursor = text.index(after: cursor)
+            }
+            guard cursor < text.endIndex else { return nil }
+            let start = cursor
+            while cursor < text.endIndex, !text[cursor].isWhitespace {
+                cursor = text.index(after: cursor)
+            }
+            if tokenIndex == wordIndex {
+                return start..<cursor
+            }
+            tokenIndex += 1
+        }
+        return nil
     }
 
     @ViewBuilder

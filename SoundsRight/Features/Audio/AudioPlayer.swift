@@ -14,6 +14,10 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     var hasAudioData: Bool { lastAudioData != nil }
 
+    /// Seconds into the current audio; 0 when nothing is loaded. Wraps back to
+    /// the start on looped playback, which read-along tracking relies on.
+    var currentTime: TimeInterval { player?.currentTime ?? 0 }
+
     private var player: AVAudioPlayer?
     private var progressTimer: Timer?
     private var lastAudioData: Data?
