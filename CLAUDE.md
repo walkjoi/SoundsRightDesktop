@@ -46,8 +46,8 @@ Either path feeds TTS synthesis -> audio playback. Results can be saved to Colle
 ### TTS Fallback Chain
 
 `TTSManager` (an actor) tries providers in order:
-1. **AudioCache** -- in-memory LRU (`audioCacheMaxEntries`), empty on each launch
-2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English; the voice is user-selectable in Settings → Playback between `avaNeural` and `emmaMultilingualNeural`, stored in `@AppStorage("ttsVoice")`). Unofficial endpoint; requires network and a reasonably accurate system clock (auth token is time-derived). Bounded by a 10s idle timeout and a 30s overall synthesis deadline
+1. **AudioCache** -- two-tier LRU: in-memory (`audioCacheMaxEntries`) backed by JSON files in `~/Library/Application Support/SoundsRight/AudioCache/` (SHA-256 of text|voice|rate, `audioCacheDiskMaxBytes` cap, oldest-modification-first eviction). Cached entries carry word-boundary timings, so replays still drive read-along highlighting
+2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English; the voice is user-selectable in Settings → Playback between `avaNeural` and `emmaMultilingualNeural`, stored in `@AppStorage("ttsVoice")`). Returns `SynthesizedAudio` (audio bytes + `WordBoundary` timings parsed from `Path:audio.metadata` messages, which power read-along highlighting in the panel). Unofficial endpoint; requires network and a reasonably accurate system clock (auth token is time-derived). Bounded by a 10s idle timeout and a 30s overall synthesis deadline
 3. **FallbackTTSService** -- macOS `AVSpeechSynthesizer` with `en-US` voice (no audio data returned, plays directly). `.fallbackUsed(generation)` means speech *started*; completion arrives via the handler registered with `TTSManager.setFallbackFinishedHandler`, tagged with the utterance generation so stale events are ignored. Pause/resume/stop are supported through `TTSManager`; loop and replay are not (no audio data)
 
 `TTSResult.failed` is returned when Edge fails and fallback speech cannot start; callers must handle all three cases.
@@ -65,10 +65,12 @@ SoundsRight/
     Audio/       -- AudioPlayer
     Shortcuts/   -- Global keyboard shortcut handling
     Collection/  -- Saved-items store and models (JSON persistence)
-    History/     -- RecentLookupStore (automatic in-memory recents, menu bar)
+    History/     -- RecentLookupStore (automatic recents, JSON-persisted,
+                    surfaced in the menu bar)
   UI/            -- SwiftUI views (TranslationView, MenuBarView, SettingsView,
                     FloatingPanel, PlaybackControls, SoundOnlyHUD, ToastView,
-                    WelcomeView, CollectionWindowView, DictionaryDetailView)
+                    WelcomeView, CollectionWindowView, ReviewSessionView,
+                    DictionaryDetailView)
   Utilities/     -- Constants, AudioCache, SelectionReader
   Resources/     -- Assets.xcassets (app + menu bar icons); Info.plist and
                     SoundsRight.entitlements live at SoundsRight/ root

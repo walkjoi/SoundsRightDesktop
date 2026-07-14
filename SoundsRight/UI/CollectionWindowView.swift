@@ -5,6 +5,7 @@ struct CollectionWindowView: View {
     @ObservedObject var store: CollectionStore
 
     @State private var selectedID: UUID?
+    @State private var isReviewing = false
 
     init(appState: AppState) {
         self.appState = appState
@@ -12,11 +13,14 @@ struct CollectionWindowView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
-        } detail: {
-            detail
+        Group {
+            if isReviewing {
+                ReviewSessionView(appState: appState, items: store.items) {
+                    isReviewing = false
+                }
+            } else {
+                browser
+            }
         }
         .onAppear {
             if selectedID == nil {
@@ -30,6 +34,26 @@ struct CollectionWindowView: View {
                 selectedID = newItems.first?.id
             }
         })
+    }
+
+    private var browser: some View {
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
+        } detail: {
+            detail
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isReviewing = true
+                } label: {
+                    Label("Review", systemImage: "rectangle.stack")
+                }
+                .disabled(store.items.isEmpty)
+                .help("Practice your saved items: listen, recall, reveal")
+            }
+        }
     }
 
     // MARK: - Sidebar
