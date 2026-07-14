@@ -237,6 +237,7 @@ final class AppState: ObservableObject {
         audioPlayer.stop()
         await ttsManager.shutdown()
         await collectionStore.flush()
+        await recentLookupStore.flush()
         hidePanel()
         soundOnlyPanel?.orderOut(nil)
         logger.info("App shutdown complete")
