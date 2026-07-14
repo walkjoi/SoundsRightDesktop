@@ -156,6 +156,14 @@ struct GeneralSettingsTab: View {
 
 struct PlaybackSettingsTab: View {
     @ObservedObject var appState: AppState
+
+    /// Deliberately view-local rather than bound through AppState: AppKit-bridged
+    /// pickers write their binding during the view-update pass, and an @AppStorage
+    /// accessed via an ObservableObject fires objectWillChange on write — which
+    /// mid-update logs "Publishing changes from within view updates is not allowed".
+    /// Same UserDefaults key, so AppState.ttsVoice still reads the value live.
+    @AppStorage("ttsVoice") private var ttsVoiceRaw: String = AppConstants.defaultVoice.rawValue
+
     private let defaultColumns = [
         GridItem(.adaptive(minimum: 88, maximum: 120), spacing: 8, alignment: .leading)
     ]
@@ -238,7 +246,7 @@ struct PlaybackSettingsTab: View {
 
             SettingsSection(title: "Voice") {
                 SettingsRow(label: "Speaking voice") {
-                    Picker("", selection: $appState.ttsVoiceRaw) {
+                    Picker("", selection: $ttsVoiceRaw) {
                         ForEach(TTSVoice.allCases) { voice in
                             Text(voice.displayName).tag(voice.rawValue)
                         }
