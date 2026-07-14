@@ -95,6 +95,8 @@ enum AppConstants {
     /// How long to wait for the synthesized Cmd+C to land on the pasteboard.
     static let pasteboardCopyTimeoutNanoseconds: UInt64 = 500_000_000
     static let audioCacheMaxEntries = 20
+    /// Size cap for the on-disk audio cache (Application Support/SoundsRight/AudioCache).
+    static let audioCacheDiskMaxBytes = 50 * 1024 * 1024
     static let defaultVoice = TTSVoice.avaNeural
     /// How many automatic history entries to keep (menu bar → Recent).
     static let recentLookupsMaxEntries = 20

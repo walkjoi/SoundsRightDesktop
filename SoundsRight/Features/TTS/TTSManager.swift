@@ -8,7 +8,8 @@ actor TTSManager {
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "TTSManager")
 
     enum TTSResult {
-        case audioData(Data)
+        /// Playable audio plus word timings (empty when the provider sent none).
+        case audio(SynthesizedAudio)
         /// Fallback speech has *started*; the payload is the utterance generation.
         /// Completion arrives via the handler passed to `setFallbackFinishedHandler`.
         case fallbackUsed(Int)
@@ -32,15 +33,15 @@ actor TTSManager {
 
         if let cachedAudio = await cache.get(cacheKey) {
             logger.debug("Cache hit for text synthesis")
-            return .audioData(cachedAudio)
+            return .audio(cachedAudio)
         }
 
         do {
-            let audioData = try await edgeTTS.synthesize(text: text, voice: voice, rate: rate)
+            let audio = try await edgeTTS.synthesize(text: text, voice: voice, rate: rate)
 
-            await cache.set(cacheKey, audioData)
+            await cache.set(cacheKey, audio)
             logger.info("Edge TTS synthesis succeeded")
-            return .audioData(audioData)
+            return .audio(audio)
         } catch {
             logger.warning("Edge TTS synthesis failed: \(error.localizedDescription)")
 

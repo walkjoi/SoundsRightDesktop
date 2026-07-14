@@ -34,7 +34,9 @@ enum EdgeTTSProtocol {
 
     static func buildConfigMessage() -> String {
         let timestamp = jsTimestamp()
-        let config = #"{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}"#
+        // wordBoundaryEnabled: the server then interleaves Path:audio.metadata
+        // messages with per-word timing, which drives read-along highlighting.
+        let config = #"{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}"#
         return "X-Timestamp:\(timestamp)\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\(config)"
     }
 

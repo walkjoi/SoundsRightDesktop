@@ -35,7 +35,7 @@ actor EdgeTTSService {
         }
     }
 
-    func synthesize(text: String, voice: TTSVoice, rate: PlaybackRate) async throws -> Data {
+    func synthesize(text: String, voice: TTSVoice, rate: PlaybackRate) async throws -> SynthesizedAudio {
         let token = EdgeTTSProtocol.generateSecMsGec()
         let url = EdgeTTSProtocol.buildWebSocketURL(token: token)
 
@@ -65,6 +65,7 @@ actor EdgeTTSService {
             logger.debug("Sent synthesis message to Edge TTS")
 
             var audioBuffer = Data()
+            var wordBoundaries: [WordBoundary] = []
             var receivingAudio = true
 
             while receivingAudio {
@@ -73,7 +74,9 @@ actor EdgeTTSService {
                 switch message {
                 case .string(let stringMessage):
                     logger.debug("Received string message")
-                    if stringMessage.contains("Path:turn.end") {
+                    if stringMessage.contains("Path:audio.metadata") {
+                        wordBoundaries.append(contentsOf: Self.parseWordBoundaries(from: stringMessage))
+                    } else if stringMessage.contains("Path:turn.end") {
                         logger.info("Received turn.end, stopping audio reception")
                         receivingAudio = false
                     }
@@ -94,8 +97,8 @@ actor EdgeTTSService {
                 throw EdgeTTSError.noAudioReceived
             }
 
-            logger.info("Edge TTS synthesis succeeded, received \(audioBuffer.count) bytes of audio")
-            return audioBuffer
+            logger.info("Edge TTS synthesis succeeded: \(audioBuffer.count) bytes, \(wordBoundaries.count) word boundaries")
+            return SynthesizedAudio(data: audioBuffer, wordBoundaries: wordBoundaries)
         } catch let error as EdgeTTSError {
             throw error
         } catch let error as URLError where error.code == .timedOut {
@@ -110,6 +113,67 @@ actor EdgeTTSService {
             }
             logger.error("Edge TTS synthesis failed — \(detail)")
             throw EdgeTTSError.connectionFailed(detail)
+        }
+    }
+
+    // MARK: - Metadata Parsing
+
+    /// The JSON body of a `Path:audio.metadata` message. Offsets/durations are
+    /// in 100-nanosecond ticks relative to the start of the audio stream.
+    private struct MetadataPayload: Decodable {
+        let metadata: [Entry]
+
+        enum CodingKeys: String, CodingKey {
+            case metadata = "Metadata"
+        }
+
+        struct Entry: Decodable {
+            let type: String
+            let data: EntryData?
+
+            enum CodingKeys: String, CodingKey {
+                case type = "Type"
+                case data = "Data"
+            }
+        }
+
+        struct EntryData: Decodable {
+            let offset: Double
+            let duration: Double?
+            let text: TextInfo
+
+            enum CodingKeys: String, CodingKey {
+                case offset = "Offset"
+                case duration = "Duration"
+                case text
+            }
+        }
+
+        struct TextInfo: Decodable {
+            let text: String
+
+            enum CodingKeys: String, CodingKey {
+                case text = "Text"
+            }
+        }
+    }
+
+    private static func parseWordBoundaries(from message: String) -> [WordBoundary] {
+        guard let bodyStart = message.range(of: "\r\n\r\n")?.upperBound,
+              let body = message[bodyStart...].data(using: .utf8),
+              let payload = try? JSONDecoder().decode(MetadataPayload.self, from: body)
+        else {
+            return []
+        }
+
+        let ticksPerSecond = 10_000_000.0
+        return payload.metadata.compactMap { entry in
+            guard entry.type == "WordBoundary", let data = entry.data else { return nil }
+            return WordBoundary(
+                time: data.offset / ticksPerSecond,
+                duration: (data.duration ?? 0) / ticksPerSecond,
+                text: data.text.text
+            )
         }
     }
 

@@ -588,9 +588,9 @@ final class AppState: ObservableObject {
         }
 
         switch result {
-        case .audioData(let audioData):
+        case .audio(let audio):
             do {
-                try audioPlayer.play(data: audioData)
+                try audioPlayer.play(data: audio.data)
                 isUsingFallbackVoice = false
                 ttsState = .playing
                 logger.info("Audio playback started")
@@ -761,9 +761,9 @@ final class AppState: ObservableObject {
         }
 
         switch result {
-        case .audioData(let audioData):
+        case .audio(let audio):
             do {
-                try audioPlayer.play(data: audioData, loop: loop)
+                try audioPlayer.play(data: audio.data, loop: loop)
                 isLooping = loop
                 isUsingFallbackVoice = false
                 ttsState = .playing
@@ -1210,9 +1210,9 @@ final class AppState: ObservableObject {
         }
 
         switch result {
-        case .audioData(let audioData):
+        case .audio(let audio):
             do {
-                try audioPlayer.play(data: audioData)
+                try audioPlayer.play(data: audio.data)
                 isUsingFallbackVoice = false
                 ttsState = .playing
             } catch {
