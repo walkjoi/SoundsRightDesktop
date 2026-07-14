@@ -1,6 +1,6 @@
 # SoundsRight Desktop
 
-macOS menu bar app (Swift 5.9, SwiftUI, macOS 13+) that reads the currently selected text aloud with Chinese translation. Two activation modes, each with a global hotkey: Translation (⌘⌥X, floating panel) and Sound Only (⌘⌥Z, compact HUD). Uses XcodeGen (`project.yml`) to generate the Xcode project; a SwiftPM-based build path exists for machines without Xcode.
+macOS menu bar app (Swift 5.9, SwiftUI, macOS 13+) that reads the currently selected text aloud with Chinese translation. Two activation modes, each with a global hotkey: Translation (⌘⌥X, floating panel anchored at the cursor, transient unless pinned) and Sound Only (⌘⌥Z, compact HUD, promotable to the full panel via its expand button). Both are also reachable from the menu bar dropdown, which additionally lists recent lookups. Uses XcodeGen (`project.yml`) to generate the Xcode project; a SwiftPM-based build path exists for machines without Xcode.
 
 ## Build & Run
 
@@ -36,7 +36,7 @@ Builds via SwiftPM (root `Package.swift`), assembles `build.noindex/SoundsRight.
 
 Single-target app with a `@main` SwiftUI entry point (`SoundsRightApp`) that lives entirely in the menu bar (`MenuBarExtra`). Core state is centralized in `AppState` (an `@MainActor ObservableObject`).
 
-Key data flow: on hotkey press, `SelectionReader` captures the current selection by synthesizing ⌘C and reading the pasteboard (requires Accessibility permission; input is truncated to `maxInputLength`; the user's previous clipboard contents are restored afterwards, and the ⌘C keycode is resolved against the active keyboard layout). Then:
+Key data flow: on hotkey press, `SelectionReader` captures the current selection by synthesizing ⌘C and reading the pasteboard (requires Accessibility permission; input is truncated to `maxInputLength` with a `wasTruncated` flag surfaced in the UI; the user's previous clipboard contents are restored afterwards, and the ⌘C keycode is resolved against the active keyboard layout). Failed activations always produce visible feedback (a cursor-anchored toast via `AppState.showToast`, or the Accessibility alert). Successful lookups are also recorded in `RecentLookupStore` (in-memory, surfaced in the menu bar dropdown). Then:
 
 - **Single word** -> dictionary lookup via `api.dictionaryapi.dev`; on macOS 15+ the definitions are then translated to Chinese in the background (English-only result on older macOS)
 - **Multiple words** -> Apple Translation, en -> zh-Hans (macOS 15+ only; runs inside `.translationTask` modifiers on `TranslationView`, so the panel must be visible)
@@ -47,7 +47,7 @@ Either path feeds TTS synthesis -> audio playback. Results can be saved to Colle
 
 `TTSManager` (an actor) tries providers in order:
 1. **AudioCache** -- in-memory LRU (`audioCacheMaxEntries`), empty on each launch
-2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English, `avaNeural` voice). Unofficial endpoint; requires network and a reasonably accurate system clock (auth token is time-derived). Bounded by a 10s idle timeout and a 30s overall synthesis deadline
+2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English; the voice is user-selectable in Settings → Playback between `avaNeural` and `emmaMultilingualNeural`, stored in `@AppStorage("ttsVoice")`). Unofficial endpoint; requires network and a reasonably accurate system clock (auth token is time-derived). Bounded by a 10s idle timeout and a 30s overall synthesis deadline
 3. **FallbackTTSService** -- macOS `AVSpeechSynthesizer` with `en-US` voice (no audio data returned, plays directly). `.fallbackUsed(generation)` means speech *started*; completion arrives via the handler registered with `TTSManager.setFallbackFinishedHandler`, tagged with the utterance generation so stale events are ignored. Pause/resume/stop are supported through `TTSManager`; loop and replay are not (no audio data)
 
 `TTSResult.failed` is returned when Edge fails and fallback speech cannot start; callers must handle all three cases.
@@ -65,14 +65,16 @@ SoundsRight/
     Audio/       -- AudioPlayer
     Shortcuts/   -- Global keyboard shortcut handling
     Collection/  -- Saved-items store and models (JSON persistence)
+    History/     -- RecentLookupStore (automatic in-memory recents, menu bar)
   UI/            -- SwiftUI views (TranslationView, MenuBarView, SettingsView,
-                    FloatingPanel, PlaybackControls, SoundOnlyHUD,
-                    CollectionWindowView, DictionaryDetailView)
+                    FloatingPanel, PlaybackControls, SoundOnlyHUD, ToastView,
+                    WelcomeView, CollectionWindowView, DictionaryDetailView)
   Utilities/     -- Constants, AudioCache, SelectionReader
   Resources/     -- Assets.xcassets (app + menu bar icons); Info.plist and
                     SoundsRight.entitlements live at SoundsRight/ root
 SoundsRightTests/ -- XCTest smoke test
-Scripts/         -- build-app.sh (SwiftPM build for machines without Xcode)
+Scripts/         -- build-app.sh (SwiftPM build for machines without Xcode);
+                    generate-icons.swift (renders all icon PNGs from code)
 Vendor/          -- vendored KeyboardShortcuts (see Build & Run)
 docs/            -- design specs
 ```
@@ -102,3 +104,4 @@ Strict concurrency is enabled (`SWIFT_STRICT_CONCURRENCY: complete`). All new co
 - If modifying the TTS fallback chain, preserve the cache-first lookup and the Edge -> AVSpeech ordering.
 - New UI views go in `UI/`; new feature domains get their own subdirectory under `Features/`.
 - `project.yml` resolves KeyboardShortcuts as `from: "2.0.0"` (floating), so Xcode may pick up a newer 2.x than the vendored 2.4.0 on its own. Either pin an exact version in `project.yml`, or re-vendor `Vendor/KeyboardShortcuts` (and re-strip its `#Preview` blocks) whenever the resolved version changes.
+- Icons are code-generated: edit `Scripts/generate-icons.swift` and run `swift Scripts/generate-icons.swift` from the repo root, then commit the regenerated PNGs. Xcode builds compile them from `Assets.xcassets` (`ASSETCATALOG_COMPILER_APPICON_NAME`); `build-app.sh` packs the same PNGs into an `.icns` with `iconutil` (SwiftPM cannot compile asset catalogs). The menu bar icon is a template image with an SF Symbol fallback in `SoundsRightApp` for CLT builds, where the asset catalog is absent at runtime.

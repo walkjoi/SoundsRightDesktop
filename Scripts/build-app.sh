@@ -35,6 +35,23 @@ for bundle in ".build/$CONFIG"/*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 
+# App icon: SwiftPM can't compile the asset catalog (actool ships with Xcode),
+# so build an .icns from the same PNGs with iconutil (part of macOS) and point
+# CFBundleIconFile at it. Xcode builds get the icon from Assets.xcassets instead.
+ICONSET_SRC="SoundsRight/Resources/Assets.xcassets/AppIcon.appiconset"
+if command -v iconutil >/dev/null && [ -e "$ICONSET_SRC/AppIcon-512x512@2x.png" ]; then
+    ICONSET="build.noindex/AppIcon.iconset"
+    rm -rf "$ICONSET"
+    mkdir -p "$ICONSET"
+    for size in 16 32 128 256 512; do
+        cp "$ICONSET_SRC/AppIcon-${size}x${size}.png"    "$ICONSET/icon_${size}x${size}.png"
+        cp "$ICONSET_SRC/AppIcon-${size}x${size}@2x.png" "$ICONSET/icon_${size}x${size}@2x.png"
+    done
+    iconutil -c icns -o "$APP/Contents/Resources/AppIcon.icns" "$ICONSET"
+    rm -rf "$ICONSET"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist"
+fi
+
 # Ad-hoc signature: required on Apple Silicon, needs no developer account.
 # (No --deep: nested bundles are resource-only and need no signing of their own.)
 codesign --force --sign - "$APP"

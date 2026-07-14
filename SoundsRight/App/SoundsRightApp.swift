@@ -14,8 +14,16 @@ struct SoundsRightApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("SoundsRight", systemImage: "character.book.closed") {
+        MenuBarExtra {
             MenuBarView(appState: appState)
+        } label: {
+            // The custom template icon lives in the asset catalog, which only
+            // Xcode builds compile; SwiftPM/CLT builds fall back to a symbol.
+            if NSImage(named: "MenuBarIcon") != nil {
+                Image("MenuBarIcon")
+            } else {
+                Image(systemName: "character.book.closed")
+            }
         }
         .menuBarExtraStyle(.window)
     }
