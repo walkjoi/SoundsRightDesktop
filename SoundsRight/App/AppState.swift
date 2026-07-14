@@ -151,10 +151,6 @@ final class AppState: ObservableObject {
 
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "AppState")
 
-    private var isSingleWordSelection: Bool {
-        currentText.split(whereSeparator: \.isWhitespace).count == 1
-    }
-
     // MARK: - Initialization
 
     init() {
@@ -528,6 +524,7 @@ final class AppState: ObservableObject {
         isTranslating = false
         translationError = nil
         recentLookupStore.record(text: currentText, summary: text)
+        resizePanelToFitContent()
         logger.info("Translation succeeded")
     }
 
@@ -537,6 +534,7 @@ final class AppState: ObservableObject {
         translationError = error.localizedDescription
         pendingTranslation = nil
         isTranslating = false
+        resizePanelToFitContent()
         logger.error("Translation failed: \(error.localizedDescription)")
     }
 
@@ -852,8 +850,7 @@ final class AppState: ObservableObject {
 
     private func resizePanelToFitContent() {
         guard let panel = floatingPanel,
-              let hostingController = panel.contentViewController as? NSHostingController<TranslationView>,
-              isSingleWordSelection
+              let hostingController = panel.contentViewController as? NSHostingController<TranslationView>
         else {
             return
         }

@@ -77,6 +77,9 @@ struct TranslationView: View {
                     .font(.system(size: 20, weight: .medium, design: .rounded))
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Full wrapped height, so the panel's fit-to-content resize
+                    // measures every line instead of a collapsed scroll view.
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
             .frame(maxHeight: 200)
