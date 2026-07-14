@@ -791,11 +791,18 @@ final class AppState: ObservableObject {
 
     // MARK: - Panel Management
 
+    /// Autosave name under which the translation panel's frame persists —
+    /// the panel has a fixed, user-controlled position, not a computed one.
+    private static let panelFrameAutosaveName = "TranslationPanel"
+
     private func showPanel() {
         logger.debug("Showing floating panel")
 
         if floatingPanel == nil {
-            floatingPanel = FloatingPanel()
+            let panel = FloatingPanel()
+            // The panel stays wherever the user last dragged it, across launches.
+            panel.setFrameAutosaveName(Self.panelFrameAutosaveName)
+            floatingPanel = panel
         }
 
         let requestID = currentRequestID
@@ -817,9 +824,10 @@ final class AppState: ObservableObject {
             return
         }
 
-        // A pinned, already-visible panel keeps its place; otherwise it anchors
-        // at the cursor — feedback belongs where the user is already looking.
-        let shouldAnchorAtCursor = !(isPanelPinned && panel.isVisible)
+        // Center exactly once — before the user has ever placed the panel.
+        // From then on the autosaved frame is the single source of position.
+        let needsInitialCentering = !panel.isVisible
+            && UserDefaults.standard.string(forKey: "NSWindow Frame \(Self.panelFrameAutosaveName)") == nil
         isPanelVisible = true
 
         DispatchQueue.main.async {
@@ -828,8 +836,8 @@ final class AppState: ObservableObject {
             panel.contentViewController = hostingController
             let initialSize = NSSize(width: 420, height: 180)
             panel.setContentSize(initialSize)
-            if shouldAnchorAtCursor {
-                Self.position(panel, nearCursorWithSize: initialSize, offset: NSPoint(x: 14, y: -14))
+            if needsInitialCentering {
+                panel.center()
             }
             // No NSApp.activate here: the panel is .nonactivatingPanel by design so the
             // source app keeps focus; makeKeyAndOrderFront is enough for Esc and clicks.
@@ -839,7 +847,7 @@ final class AppState: ObservableObject {
     }
 
     /// Places `panel` next to the mouse (below for negative y offsets), clamped
-    /// to the screen's visible frame — the same placement the HUD uses.
+    /// to the screen's visible frame — used by the toast (the HUD does its own).
     private static func position(_ panel: NSPanel, nearCursorWithSize size: NSSize, offset: NSPoint) {
         let mouse = NSEvent.mouseLocation
         var origin = NSPoint(
@@ -869,8 +877,8 @@ final class AppState: ObservableObject {
                 width: max(420, min(fittedSize.width, targetWidth)),
                 height: max(170, fittedSize.height)
             )
-            // Keep the top-left corner fixed so a panel anchored below the
-            // selection grows downward, away from the text being read.
+            // Keep the top-left corner fixed so the panel grows downward from
+            // its position instead of its title bar jumping upward.
             let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
             panel.setContentSize(contentSize)
             panel.setFrameTopLeftPoint(topLeft)
