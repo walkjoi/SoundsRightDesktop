@@ -34,7 +34,11 @@ final class AppState: ObservableObject {
     @Published var isTranslatingDefinitions: Bool = false
 
     @Published var ttsState: TTSPlaybackState = .idle
-    @Published var isLooping: Bool = false
+
+    /// True while the loaded audio is actually looping. Distinct from the
+    /// persistent `repeatEnabled` preference the toggle buttons show: fallback
+    /// speech can't loop, and turning repeat off lets the current pass finish.
+    @Published private(set) var isLooping: Bool = false
 
     @Published var isPanelVisible: Bool = false
 
@@ -84,6 +88,7 @@ final class AppState: ObservableObject {
     // MARK: - App Storage
 
     @AppStorage("autoPlay") var autoPlay: Bool = true
+    @AppStorage("repeatEnabled") var repeatEnabled: Bool = false
     @AppStorage("playbackRate") var playbackRateRaw: Double = 1.0
     @AppStorage("playbackRateOptions") var playbackRateOptionsRaw: String =
         PlaybackRate.storageValue(for: PlaybackRate.defaultOptions)
@@ -604,7 +609,8 @@ final class AppState: ObservableObject {
         switch result {
         case .audio(let audio):
             do {
-                try audioPlayer.play(data: audio.data)
+                try audioPlayer.play(data: audio.data, loop: repeatEnabled)
+                isLooping = repeatEnabled
                 isUsingFallbackVoice = false
                 ttsState = .playing
                 startReadAlong(with: audio.wordBoundaries)
@@ -755,26 +761,38 @@ final class AppState: ObservableObject {
         ttsState = .idle
     }
 
+    /// Toggles the persistent repeat preference (shared by the panel and the
+    /// HUD, and honored by every new playback) and applies it to the loaded
+    /// audio in place: enabling mid-play loops seamlessly, disabling lets the
+    /// current pass finish instead of cutting it off.
     func toggleLoop() {
-        if isLooping {
-            logger.info("Stopping loop")
+        if repeatEnabled {
+            logger.info("Repeat turned off")
+            repeatEnabled = false
             isLooping = false
-            audioPlayer.stop()
-            // Keep the boundaries: the audio data is still loaded for replay.
-            stopReadAlongTracking()
-            ttsState = .idle
+            audioPlayer.setLooping(false)
         } else {
+            logger.info("Repeat turned on")
+            repeatEnabled = true
             // Looping replays buffered audio data; fallback speech has none.
             guard activeFallbackGeneration == nil else { return }
-            logger.info("Starting loop")
-            do {
-                try audioPlayer.replayLooping()
+            switch ttsState {
+            case .playing, .paused:
+                audioPlayer.setLooping(true)
                 isLooping = true
-                ttsState = .playing
-                startReadAlongTracking()
-            } catch {
-                ttsState = .error(error.localizedDescription)
-                logger.error("Loop failed: \(error.localizedDescription)")
+            case .loading:
+                // A synthesis is in flight; playTTS applies the preference on landing.
+                break
+            case .idle, .finished, .error:
+                do {
+                    try audioPlayer.replayLooping()
+                    isLooping = true
+                    ttsState = .playing
+                    startReadAlongTracking()
+                } catch {
+                    ttsState = .error(error.localizedDescription)
+                    logger.error("Loop failed: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -801,10 +819,9 @@ final class AppState: ObservableObject {
         logger.info("Playback rate changed to \(rate.displayLabel)")
 
         if case .playing = ttsState {
-            let shouldLoop = isLooping
             restartPlaybackTask?.cancel()
             restartPlaybackTask = Task {
-                await restartPlaybackForUpdatedRate(loop: shouldLoop)
+                await restartPlaybackForUpdatedRate()
             }
         }
     }
@@ -828,7 +845,7 @@ final class AppState: ObservableObject {
         setPlaybackRate(.normal)
     }
 
-    private func restartPlaybackForUpdatedRate(loop: Bool) async {
+    private func restartPlaybackForUpdatedRate() async {
         guard !currentText.isEmpty else { return }
         playbackGeneration += 1
         let generation = playbackGeneration
@@ -849,8 +866,8 @@ final class AppState: ObservableObject {
         switch result {
         case .audio(let audio):
             do {
-                try audioPlayer.play(data: audio.data, loop: loop)
-                isLooping = loop
+                try audioPlayer.play(data: audio.data, loop: repeatEnabled)
+                isLooping = repeatEnabled
                 isUsingFallbackVoice = false
                 ttsState = .playing
                 startReadAlong(with: audio.wordBoundaries)
@@ -1280,6 +1297,8 @@ final class AppState: ObservableObject {
         playbackGeneration += 1
         let generation = playbackGeneration
 
+        // One-shot on purpose: repeat applies to lookup playback, where a
+        // repeat toggle is on screen — collection rows and previews have none.
         isLooping = false
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil

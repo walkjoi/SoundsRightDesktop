@@ -46,6 +46,13 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
         startProgressTimer()
     }
 
+    /// Applies a loop-mode change to the loaded player in place: enabling keeps
+    /// playback repeating from wherever it is; disabling lets the current pass
+    /// play out and finish naturally.
+    func setLooping(_ loop: Bool) {
+        player?.numberOfLoops = loop ? -1 : 0
+    }
+
     func replayLooping() throws {
         guard let audioData = lastAudioData else {
             throw AudioPlayerError.noAudioDataToReplay

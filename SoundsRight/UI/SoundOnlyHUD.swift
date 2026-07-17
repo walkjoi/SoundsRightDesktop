@@ -34,20 +34,20 @@ struct SoundOnlyHUD: View {
                 }
             }
 
-            // Loop
+            // Repeat (persistent preference, shared with the panel)
             Button(action: { appState.toggleLoop() }) {
                 Image(systemName: "repeat")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(appState.isLooping ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(appState.repeatEnabled ? Color.accentColor : Color.secondary)
                     .frame(width: 22, height: 22)
                     .background(
-                        appState.isLooping ? Color.accentColor.opacity(0.12) : Color.clear,
+                        appState.repeatEnabled ? Color.accentColor.opacity(0.12) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 5)
                     )
             }
             .buttonStyle(.plain)
             .disabled(!appState.hasAudioData)
-            .help(appState.isLooping ? "Stop looping" : "Loop")
+            .help(appState.repeatEnabled ? "Turn off repeat" : "Repeat")
 
             // Speed pill
             Button(action: { appState.cycleSpeed() }) {

@@ -39,20 +39,20 @@ struct PlaybackControls: View {
                 .help(isPlaying ? "Pause" : "Play")
             }
 
-            // Loop
+            // Repeat (persistent preference, shared with the HUD)
             Button(action: { appState.toggleLoop() }) {
                 Image(systemName: "repeat")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(appState.isLooping ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(appState.repeatEnabled ? Color.accentColor : Color.secondary)
                     .frame(width: 20, height: 20)
                     .background(
-                        appState.isLooping ? Color.accentColor.opacity(0.12) : Color.clear,
+                        appState.repeatEnabled ? Color.accentColor.opacity(0.12) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 5)
                     )
             }
             .buttonStyle(.plain)
             .disabled(isLoopDisabled)
-            .help(appState.isLooping ? "Stop looping" : "Loop")
+            .help(appState.repeatEnabled ? "Turn off repeat" : "Repeat")
 
             // Speed pill
             Button(action: { appState.cycleSpeed() }) {
