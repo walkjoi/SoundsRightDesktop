@@ -14,6 +14,28 @@ enum TTSVoice: String, CaseIterable, Identifiable {
             return "Emma"
         }
     }
+
+    /// True for voices that auto-detect the input language instead of always
+    /// speaking en-US. The Edge readaloud endpoint rejects the `<lang>` SSML
+    /// element that would pin the language, so detection cannot be overridden.
+    var isMultilingual: Bool {
+        switch self {
+        case .avaNeural:
+            return false
+        case .emmaMultilingualNeural:
+            return true
+        }
+    }
+
+    /// Shown under the voice picker in Settings.
+    var pronunciationNote: String {
+        switch self {
+        case .avaNeural:
+            return "American English only — single words always get the American pronunciation."
+        case .emmaMultilingualNeural:
+            return "Multilingual — guesses the language from the text, so an isolated word (e.g. “lap”) may be read as another language."
+        }
+    }
 }
 
 enum PlaybackRate: Double, CaseIterable, Comparable, Identifiable {

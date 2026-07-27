@@ -164,6 +164,10 @@ struct PlaybackSettingsTab: View {
     /// Same UserDefaults key, so AppState.ttsVoice still reads the value live.
     @AppStorage("ttsVoice") private var ttsVoiceRaw: String = AppConstants.defaultVoice.rawValue
 
+    private var selectedVoice: TTSVoice {
+        TTSVoice(rawValue: ttsVoiceRaw) ?? AppConstants.defaultVoice
+    }
+
     private let defaultColumns = [
         GridItem(.adaptive(minimum: 88, maximum: 120), spacing: 8, alignment: .leading)
     ]
@@ -256,6 +260,18 @@ struct PlaybackSettingsTab: View {
                     .controlSize(.small)
                     .frame(width: 160)
                 }
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: selectedVoice.isMultilingual ? "exclamationmark.triangle.fill" : "info.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(selectedVoice.isMultilingual ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
+                    Text(selectedVoice.pronunciationNote)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
 
                 SettingsRow(label: "Preview voice") {
                     Button {
