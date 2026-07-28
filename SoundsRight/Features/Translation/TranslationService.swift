@@ -1,7 +1,9 @@
 import Foundation
 
 actor TranslationService {
-    func dictionaryLookupCandidate(from text: String) -> String? {
+    /// Pure token inspection — nonisolated so callers can also use it
+    /// synchronously to derive cache keys.
+    nonisolated func dictionaryLookupCandidate(from text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 

@@ -1,6 +1,6 @@
 # SoundsRight Desktop
 
-macOS menu bar app (Swift 5.9, SwiftUI, macOS 13+) that reads the currently selected text aloud with Chinese translation. Two activation modes, each with a global hotkey: Translation (⌘⌥X, floating panel fixed at screen center, transient unless pinned) and Sound Only (⌘⌥Z, compact HUD at the cursor, promotable to the full panel via its expand button). Both are also reachable from the menu bar dropdown, which additionally lists recent lookups. Uses XcodeGen (`project.yml`) to generate the Xcode project; a SwiftPM-based build path exists for machines without Xcode.
+macOS menu bar app (Swift 5.9, SwiftUI, macOS 13+) that reads the currently selected text aloud with Chinese translation. Two activation modes, each with a global hotkey: Translation (⌘⌥X, floating panel fixed at screen center, transient unless pinned) and Sound Only (⌘⌥Z, compact HUD at the cursor, promotable to the full panel via its expand button). Both are also reachable from the menu bar dropdown, which additionally lists recent lookups. An optional hover trigger (Settings → General → Activation, default off) fires the Translation flow automatically after text is selected with the mouse and the pointer briefly rests (`HoverTriggerMonitor`); keyboard shortcuts stay active either way, and hover-trigger failures are silent instead of toasting. Uses XcodeGen (`project.yml`) to generate the Xcode project; a SwiftPM-based build path exists for machines without Xcode.
 
 ## Build & Run
 
@@ -38,8 +38,10 @@ Single-target app with a `@main` SwiftUI entry point (`SoundsRightApp`) that liv
 
 Key data flow: on hotkey press, `SelectionReader` captures the current selection by synthesizing ⌘C and reading the pasteboard (requires Accessibility permission; input is truncated to `maxInputLength` with a `wasTruncated` flag surfaced in the UI; the user's previous clipboard contents are restored afterwards, and the ⌘C keycode is resolved against the active keyboard layout). Failed activations always produce visible feedback (a cursor-anchored toast via `AppState.showToast`, or the Accessibility alert). Successful lookups are also recorded in `RecentLookupStore` (in-memory, surfaced in the menu bar dropdown). Then:
 
-- **Single word** -> dictionary lookup via `api.dictionaryapi.dev`; on macOS 15+ the definitions are then translated to Chinese in the background (English-only result on older macOS)
-- **Multiple words** -> Apple Translation, en -> zh-Hans (macOS 15+ only; runs inside `.translationTask` modifiers on `TranslationView`, so the panel must be visible)
+- **Single word** -> dictionary lookup via `api.dictionaryapi.dev`, raced against a plain Apple Translation of the word so unknown words aren't stuck behind a failed lookup (the richer dictionary result supersedes the translation in the UI when it lands); on macOS 15+ the definitions are then translated to Chinese in one batched `translations(from:)` call (English-only result on older macOS)
+- **Multiple words** -> Apple Translation, en -> zh-Hans (macOS 15+ only)
+
+Apple Translation runs in a single resident session for both paths (same en → zh-Hans pair): `TranslationSessionModifier` on `TranslationView` keeps its `.translationTask` closure looping over `AppState.beginTranslationWorkStream()`, so the session — and its loaded language models — survives across lookups, and the panel's `NSHostingController` is created once and reused for the same reason. Work is handed to the live loop through the stream's continuation, or parked in `pendingTranslationWork` and re-armed via `translationWorkTrigger` + configuration invalidation when no loop is running. Translation errors finish the stream so the next lookup starts a fresh session. Completed sentence translations and fully-translated dictionary entries are kept in in-memory LRU caches (`AppConstants.lookupCacheMaxEntries`), so repeat lookups render instantly; per-lookup latency is logged by `AppState.logLookupLatency`.
 
 Either path feeds TTS synthesis -> audio playback. Results can be saved to Collections, persisted as JSON in `~/Library/Application Support/SoundsRight/`.
 
@@ -63,7 +65,8 @@ SoundsRight/
                     .translationTask modifiers)
     TTS/         -- TTSManager and all TTS service implementations
     Audio/       -- AudioPlayer
-    Shortcuts/   -- Global keyboard shortcut handling
+    Shortcuts/   -- Global activation triggers: keyboard shortcuts and the
+                    hover-selection monitor
     Collection/  -- Saved-items store and models (JSON persistence)
     History/     -- RecentLookupStore (automatic recents, JSON-persisted,
                     surfaced in the menu bar)

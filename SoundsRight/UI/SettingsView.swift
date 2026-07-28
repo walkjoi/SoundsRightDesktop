@@ -27,7 +27,9 @@ struct SettingsView: View {
             // Content
             Group {
                 if selectedTab == 0 {
-                    GeneralSettingsTab(appState: appState)
+                    ScrollView(.vertical, showsIndicators: false) {
+                        GeneralSettingsTab(appState: appState)
+                    }
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
                         PlaybackSettingsTab(appState: appState)
@@ -70,6 +72,16 @@ struct GeneralSettingsTab: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchAtLoginMessage: String?
 
+    /// View-local for the same reason as the Playback tab's voice picker: the
+    /// AppKit-bridged picker writes during the view-update pass, and writing an
+    /// @AppStorage through AppState would publish mid-update. Same UserDefaults
+    /// key, so AppState.activationTrigger still reads the value live.
+    @AppStorage("activationTrigger") private var activationTriggerRaw: String = ActivationTrigger.shortcut.rawValue
+
+    private var selectedTrigger: ActivationTrigger {
+        ActivationTrigger(rawValue: activationTriggerRaw) ?? .shortcut
+    }
+
     private static let logger = Logger(subsystem: "com.soundsright.desktop", category: "SettingsView")
 
     var body: some View {
@@ -81,6 +93,35 @@ struct GeneralSettingsTab: View {
                 SettingsRow(label: "Sound Only") {
                     KeyboardShortcuts.Recorder(for: .soundOnlyClipboard)
                 }
+            }
+
+            SettingsSection(title: "Activation") {
+                SettingsRow(label: "Trigger") {
+                    Picker("", selection: $activationTriggerRaw) {
+                        ForEach(ActivationTrigger.allCases) { trigger in
+                            Text(trigger.displayName).tag(trigger.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(width: 210)
+                    .onChange(of: activationTriggerRaw) { _ in
+                        appState.applyActivationTrigger()
+                    }
+                }
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    Text(selectedTrigger.settingsNote)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
             }
 
             SettingsSection(title: "Preferences") {

@@ -47,7 +47,6 @@ struct TranslationView: View {
         .padding(20)
         .frame(minWidth: 420, maxWidth: 560)
         .appleTranslationTask(appState: appState)
-        .dictionaryTranslationTask(appState: appState)
     }
 
     /// The source text with the currently spoken word emphasized. Words are
@@ -134,90 +133,104 @@ private extension View {
     @ViewBuilder
     func appleTranslationTask(appState: AppState) -> some View {
         if #available(macOS 15, *) {
-            self.modifier(AppleTranslationModifier(appState: appState))
-        } else {
-            self
-        }
-    }
-
-    @ViewBuilder
-    func dictionaryTranslationTask(appState: AppState) -> some View {
-        if #available(macOS 15, *) {
-            self.modifier(DictionaryTranslationModifier(appState: appState))
+            self.modifier(TranslationSessionModifier(appState: appState))
         } else {
             self
         }
     }
 }
 
+/// Hosts the app's single Apple Translation session — en → zh-Hans serves both
+/// sentence translation and dictionary-definition batches. The task closure
+/// stays resident, looping over a work stream from AppState, so the session
+/// (and its loaded language models) survives across lookups instead of being
+/// rebuilt on every activation. If the loop is ever torn down, the next
+/// trigger re-arms it by invalidating the configuration.
 @available(macOS 15.0, *)
-private struct AppleTranslationModifier: ViewModifier {
+private struct TranslationSessionModifier: ViewModifier {
     @ObservedObject var appState: AppState
     @State private var config: TranslationSession.Configuration?
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: appState.translationTrigger) {
-                config = TranslationSession.Configuration(
-                    source: Locale.Language(identifier: "en"),
-                    target: Locale.Language(identifier: "zh-Hans")
-                )
+            .task {
+                // Covers work enqueued before this view first rendered — an
+                // onChange for that trigger bump never fires.
+                if appState.hasPendingTranslationWork {
+                    armSessionIfNeeded()
+                }
             }
+            .onChange(of: appState.translationWorkTrigger) {
+                armSessionIfNeeded()
+            }
+            // The session must be used only inside this closure (it is not
+            // Sendable), so all translate calls stay inline here — work is
+            // skipped when superseded rather than handed elsewhere.
             .translationTask(config) { @Sendable session in
-                let pending = await MainActor.run { appState.pendingTranslation }
-                guard let pending else { return }
-                do {
-                    let response = try await session.translate(pending.text)
-                    await MainActor.run { appState.didFinishTranslation(response.targetText, requestID: pending.requestID) }
-                } catch {
-                    await MainActor.run { appState.didFailTranslation(error, requestID: pending.requestID) }
+                let stream = await MainActor.run { appState.beginTranslationWorkStream() }
+                for await work in stream {
+                    switch work {
+                    case .sentence(let pending):
+                        guard await MainActor.run(body: { appState.currentRequestID == pending.requestID }) else { continue }
+                        do {
+                            let response = try await session.translate(pending.text)
+                            await MainActor.run { appState.didFinishTranslation(response.targetText, requestID: pending.requestID) }
+                        } catch {
+                            await MainActor.run { appState.didFailTranslation(error, requestID: pending.requestID) }
+                        }
+
+                    case .dictionaryDefinitions(let pending):
+                        guard await MainActor.run(body: { appState.currentRequestID == pending.requestID }) else { continue }
+                        do {
+                            // One batched call — the framework parallelizes
+                            // internally and returns responses in request order.
+                            let responses = try await session.translations(
+                                from: pending.result.meanings.map { TranslationSession.Request(sourceText: $0.definition) }
+                            )
+                            let result = Self.translatedResult(from: responses, for: pending.result)
+                            await MainActor.run { appState.didFinishDictionaryTranslation(result, requestID: pending.requestID) }
+                        } catch {
+                            await MainActor.run {
+                                appState.didFailDictionaryTranslation(fallback: pending.result, error: error, requestID: pending.requestID)
+                            }
+                        }
+                    }
                 }
             }
     }
-}
 
-@available(macOS 15.0, *)
-private struct DictionaryTranslationModifier: ViewModifier {
-    @ObservedObject var appState: AppState
-    @State private var config: TranslationSession.Configuration?
+    /// (Re)starts the session task. A live loop consumes new work straight
+    /// from the stream, so this only acts when none is running.
+    private func armSessionIfNeeded() {
+        guard !appState.hasLiveTranslationSession else { return }
+        if config == nil {
+            config = TranslationSession.Configuration(
+                source: Locale.Language(identifier: "en"),
+                target: Locale.Language(identifier: "zh-Hans")
+            )
+        } else {
+            config?.invalidate()
+        }
+    }
 
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: appState.dictionaryTranslationTrigger) {
-                config = TranslationSession.Configuration(
-                    source: Locale.Language(identifier: "en"),
-                    target: Locale.Language(identifier: "zh-Hans")
-                )
-            }
-            .translationTask(config) { @Sendable session in
-                let pending = await MainActor.run { appState.pendingDictionaryResult }
-                guard let pending else { return }
-                let requestID = pending.requestID
-                let dictResult = pending.result
-                do {
-                    var translations: [String] = []
-                    translations.reserveCapacity(dictResult.meanings.count)
-                    for meaning in dictResult.meanings {
-                        let response = try await session.translate(meaning.definition)
-                        translations.append(response.targetText)
-                    }
-                    let translatedMeanings = zip(dictResult.meanings, translations).map { meaning, translated in
-                        DictionaryMeaning(
-                            partOfSpeech: meaning.partOfSpeech,
-                            definition: meaning.definition,
-                            translatedDefinition: translated
-                        )
-                    }
-                    let result = DictionaryResult(
-                        word: dictResult.word,
-                        phonetics: dictResult.phonetics,
-                        meanings: translatedMeanings
-                    )
-                    await MainActor.run { appState.didFinishDictionaryTranslation(result, requestID: requestID) }
-                } catch {
-                    await MainActor.run { appState.didFailDictionaryTranslation(fallback: dictResult, error: error, requestID: requestID) }
-                }
-            }
+    /// Merges batch responses back into the dictionary entry, definition by
+    /// definition (responses arrive in request order).
+    private nonisolated static func translatedResult(
+        from responses: [TranslationSession.Response],
+        for dictResult: DictionaryResult
+    ) -> DictionaryResult {
+        let translatedMeanings = zip(dictResult.meanings, responses).map { meaning, response in
+            DictionaryMeaning(
+                partOfSpeech: meaning.partOfSpeech,
+                definition: meaning.definition,
+                translatedDefinition: response.targetText
+            )
+        }
+        return DictionaryResult(
+            word: dictResult.word,
+            phonetics: dictResult.phonetics,
+            meanings: translatedMeanings
+        )
     }
 }
 

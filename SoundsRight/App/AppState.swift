@@ -60,27 +60,39 @@ final class AppState: ObservableObject {
 
     var hasAudioData: Bool { audioPlayer.hasAudioData }
 
-    /// Incrementing this triggers the translation task in TranslationView (Apple Translation Framework)
-    @Published var translationTrigger: Int = 0
+    /// Incrementing this (re)arms the translation session task in TranslationView
+    /// (Apple Translation framework) when no resident work loop is running.
+    @Published var translationWorkTrigger: Int = 0
 
-    /// Incrementing this triggers batched dictionary definition translation in TranslationView.
-    @Published var dictionaryTranslationTrigger: Int = 0
-
-    struct PendingDictionaryResult {
+    struct PendingDictionaryResult: Sendable {
         let requestID: Int
         let result: DictionaryResult
     }
 
-    struct PendingTranslation {
+    struct PendingTranslation: Sendable {
         let requestID: Int
         let text: String
     }
 
-    /// English-only dictionary result awaiting Chinese translation. Internal handoff to TranslationView.
-    var pendingDictionaryResult: PendingDictionaryResult?
+    /// One unit of work for the shared Apple Translation session — the language
+    /// pair is en → zh-Hans for both cases, so a single warm session serves
+    /// sentence translation and dictionary-definition batches alike.
+    enum TranslationWork: Sendable {
+        case sentence(PendingTranslation)
+        case dictionaryDefinitions(PendingDictionaryResult)
+    }
 
-    /// Sentence-mode text awaiting Apple Translation. Internal handoff to TranslationView.
-    var pendingTranslation: PendingTranslation?
+    /// Work waiting for the session task in TranslationView to (re)start. Live
+    /// work is handed off through `translationWorkContinuation` instead.
+    private var pendingTranslationWork: TranslationWork?
+
+    /// Feed of the resident translation loop in TranslationView; nil when no
+    /// loop is consuming (before the panel first arms, or after an error).
+    private var translationWorkContinuation: AsyncStream<TranslationWork>.Continuation?
+
+    /// Monotonic ID for work streams, so a stale stream's termination cannot
+    /// clear a newer stream's continuation.
+    private var translationWorkStreamGeneration = 0
 
     /// Monotonic ID bumped on every activation. Async callbacks guard on this to avoid stale writes.
     private(set) var currentRequestID: Int = 0
@@ -94,9 +106,14 @@ final class AppState: ObservableObject {
         PlaybackRate.storageValue(for: PlaybackRate.defaultOptions)
     @AppStorage("ttsVoice") var ttsVoiceRaw: String = AppConstants.defaultVoice.rawValue
     @AppStorage("hasSeenWelcome") var hasSeenWelcome: Bool = false
+    @AppStorage("activationTrigger") var activationTriggerRaw: String = ActivationTrigger.shortcut.rawValue
 
     var ttsVoice: TTSVoice {
         TTSVoice(rawValue: ttsVoiceRaw) ?? AppConstants.defaultVoice
+    }
+
+    var activationTrigger: ActivationTrigger {
+        ActivationTrigger(rawValue: activationTriggerRaw) ?? .shortcut
     }
 
     var availablePlaybackRates: [PlaybackRate] {
@@ -123,6 +140,7 @@ final class AppState: ObservableObject {
     private let translationService = TranslationService()
     let audioPlayer = AudioPlayer()
     let shortcutManager = ShortcutManager()
+    private let hoverTriggerMonitor = HoverTriggerMonitor()
     let collectionStore = CollectionStore()
     let recentLookupStore = RecentLookupStore()
 
@@ -161,6 +179,15 @@ final class AppState: ObservableObject {
     /// tracking task so loop/replay of the same audio can re-track.
     private var currentWordBoundaries: [WordBoundary] = []
     private var readAlongTask: Task<Void, Never>?
+
+    /// Completed lookups served instantly on repeat. Keyed by the exact
+    /// selection text (sentences) or the lowercased word (dictionary entries;
+    /// only fully translated entries are cached).
+    private var translationCache = LRUCache<String, TranslationResult>(capacity: AppConstants.lookupCacheMaxEntries)
+    private var dictionaryCache = LRUCache<String, DictionaryResult>(capacity: AppConstants.lookupCacheMaxEntries)
+
+    /// When the current lookup's translation work started — for latency logging.
+    private var lookupStartedAt: ContinuousClock.Instant?
 
     // MARK: - Logger
 
@@ -241,6 +268,13 @@ final class AppState: ObservableObject {
 
         logger.info("Keyboard shortcuts registered")
 
+        hoverTriggerMonitor.onHover = { [weak self] in
+            Task { @MainActor in
+                await self?.activate(mode: .translation, source: .hover)
+            }
+        }
+        applyActivationTrigger()
+
         // Teach the hotkeys and walk through the Accessibility grant *before*
         // the first hotkey press can fail.
         if !hasSeenWelcome {
@@ -251,6 +285,7 @@ final class AppState: ObservableObject {
     func shutdown() async {
         logger.info("Shutting down app")
         shortcutManager.unregister()
+        hoverTriggerMonitor.stop()
         audioPlayer.stop()
         await ttsManager.shutdown()
         await collectionStore.flush()
@@ -263,9 +298,13 @@ final class AppState: ObservableObject {
     // MARK: - Core Actions
 
     @MainActor
-    func activate(mode: ActivationMode) async {
+    func activate(mode: ActivationMode, source: ActivationSource = .userInitiated) async {
         currentRequestID += 1
         let requestID = currentRequestID
+
+        // A hotkey/menu activation consumes any armed hover gesture, so the
+        // same selection isn't looked up a second time when the pointer rests.
+        hoverTriggerMonitor.cancelPendingTrigger()
 
         logger.info("Activate triggered with mode: \(mode.rawValue), requestID: \(requestID)")
         await teardownActiveSession(for: mode)
@@ -275,6 +314,9 @@ final class AppState: ObservableObject {
         case .success(let captured):
             selection = captured
         case .failure(.noSelection):
+            // Hover triggers are speculative (a window drag can arm one), so an
+            // empty capture stays silent instead of toasting.
+            guard source == .userInitiated else { return }
             logger.info("No text selected — telling the user")
             showToast(
                 "No text selected — select some text, then press the shortcut",
@@ -285,10 +327,13 @@ final class AppState: ObservableObject {
             logger.info("Selection read already in progress — ignoring activation")
             return
         case .failure(.noPermission):
+            // Shown for hover too: the user opted into a trigger that can never
+            // work without the grant, and the alert guards against stacking.
             logger.warning("Accessibility permission missing — prompting user")
             presentAccessibilityAlert()
             return
         case .failure(.eventCreationFailed):
+            guard source == .userInitiated else { return }
             logger.error("Could not synthesize Cmd+C event — telling the user")
             showToast("Couldn't read the selection — try again", style: .notice)
             return
@@ -382,8 +427,7 @@ final class AppState: ObservableObject {
         translation = nil
         dictionaryResult = nil
         translationError = nil
-        pendingDictionaryResult = nil
-        pendingTranslation = nil
+        pendingTranslationWork = nil
         isTranslating = false
         isTranslatingDefinitions = false
         ttsState = .idle
@@ -475,6 +519,20 @@ final class AppState: ObservableObject {
         KeyboardShortcuts.getShortcut(for: name).map(String.init(describing:)) ?? "—"
     }
 
+    // MARK: - Activation Trigger
+
+    /// Starts or stops the hover monitor to match the persisted trigger
+    /// preference. Called at launch and from Settings when the picker changes.
+    func applyActivationTrigger() {
+        switch activationTrigger {
+        case .shortcut:
+            hoverTriggerMonitor.stop()
+        case .hover:
+            hoverTriggerMonitor.start()
+        }
+        logger.info("Activation trigger applied: \(self.activationTriggerRaw)")
+    }
+
     // MARK: - Translation
 
     private func startTranslation(requestID: Int) async {
@@ -485,73 +543,117 @@ final class AppState: ObservableObject {
         translationError = nil
         translation = nil
         dictionaryResult = nil
-        pendingDictionaryResult = nil
-        pendingTranslation = nil
+        pendingTranslationWork = nil
         isTranslatingDefinitions = false
+        lookupStartedAt = .now
 
-        if let word = await translationService.dictionaryLookupCandidate(from: currentText) {
-            guard requestID == currentRequestID else { return }
-            do {
-                let result = try await translationService.lookupDictionaryEntry(for: word)
-                guard requestID == currentRequestID else { return }
-                if #available(macOS 15, *) {
-                    dictionaryResult = result
-                    pendingDictionaryResult = PendingDictionaryResult(requestID: requestID, result: result)
-                    isTranslating = false
-                    isTranslatingDefinitions = true
-                    dictionaryTranslationTrigger += 1
-                    resizePanelToFitContent()
-                } else {
-                    dictionaryResult = result
-                    isTranslating = false
-                    recentLookupStore.record(text: currentText, summary: result.meanings.first?.definition)
-                    resizePanelToFitContent()
-                }
-                logger.info("Dictionary lookup succeeded")
-            } catch {
-                guard requestID == currentRequestID else { return }
-                logger.error("Dictionary lookup failed: \(error.localizedDescription)")
-                if #available(macOS 15, *) {
-                    // Word not in the dictionary (or API unavailable) — Apple Translation
-                    // handles single words fine, so degrade to the sentence path.
-                    logger.info("Falling back to Apple Translation for single word")
-                    pendingTranslation = PendingTranslation(requestID: requestID, text: currentText)
-                    translationTrigger += 1
-                } else {
-                    translationError = error.localizedDescription
-                    isTranslating = false
-                    resizePanelToFitContent()
-                }
-            }
+        if let word = translationService.dictionaryLookupCandidate(from: currentText) {
+            await lookupWord(word, requestID: requestID)
             return
         }
 
         if #available(macOS 15, *) {
-            pendingTranslation = PendingTranslation(requestID: requestID, text: currentText)
-            translationTrigger += 1
+            startSentenceTranslation(requestID: requestID)
         } else {
             isTranslating = false
             translationError = "Translation requires macOS 15 (Sequoia) or later."
         }
     }
 
+    private func lookupWord(_ word: String, requestID: Int) async {
+        let cacheKey = word.lowercased()
+
+        if let cached = dictionaryCache.value(for: cacheKey) {
+            dictionaryResult = cached
+            isTranslating = false
+            recentLookupStore.record(
+                text: currentText,
+                summary: cached.meanings.first.map { $0.translatedDefinition ?? $0.definition }
+            )
+            resizePanelToFitContent()
+            logLookupLatency("Dictionary lookup served from cache")
+            return
+        }
+
+        if #available(macOS 15, *) {
+            // Race the network lookup: the word's plain translation starts now,
+            // so a word the dictionary doesn't know isn't stuck waiting for the
+            // failed lookup before translation even begins. The richer
+            // dictionary result supersedes it in the UI when it lands.
+            startSentenceTranslation(requestID: requestID)
+        }
+
+        do {
+            let result = try await translationService.lookupDictionaryEntry(for: word)
+            guard requestID == currentRequestID else { return }
+            if #available(macOS 15, *) {
+                dictionaryResult = result
+                isTranslating = false
+                isTranslatingDefinitions = true
+                enqueueTranslationWork(.dictionaryDefinitions(
+                    PendingDictionaryResult(requestID: requestID, result: result)
+                ))
+                resizePanelToFitContent()
+            } else {
+                dictionaryCache.insert(result, for: cacheKey)
+                dictionaryResult = result
+                isTranslating = false
+                recentLookupStore.record(text: currentText, summary: result.meanings.first?.definition)
+                resizePanelToFitContent()
+            }
+            logger.info("Dictionary lookup succeeded")
+        } catch {
+            guard requestID == currentRequestID else { return }
+            logger.error("Dictionary lookup failed: \(error.localizedDescription)")
+            if #available(macOS 15, *) {
+                // The racing sentence translation is already covering this word.
+            } else {
+                translationError = error.localizedDescription
+                isTranslating = false
+                resizePanelToFitContent()
+            }
+        }
+    }
+
+    /// Serves the translation from cache when possible, otherwise routes it to
+    /// the shared translation session.
+    @available(macOS 15, *)
+    private func startSentenceTranslation(requestID: Int) {
+        if let cached = translationCache.value(for: currentText) {
+            translation = cached
+            isTranslating = false
+            recentLookupStore.record(text: currentText, summary: cached.translated)
+            resizePanelToFitContent()
+            logLookupLatency("Translation served from cache")
+            return
+        }
+        enqueueTranslationWork(.sentence(PendingTranslation(requestID: requestID, text: currentText)))
+    }
+
     /// Called by TranslationView when Apple Translation succeeds.
     func didFinishTranslation(_ text: String, requestID: Int) {
         guard requestID == currentRequestID else { return }
-        translation = TranslationResult(translated: text)
-        pendingTranslation = nil
+        // For a single word the dictionary entry is the richer answer — once
+        // it has landed, the racing sentence translation is redundant.
+        guard dictionaryResult == nil else { return }
+        let result = TranslationResult(translated: text)
+        translationCache.insert(result, for: currentText)
+        translation = result
         isTranslating = false
         translationError = nil
         recentLookupStore.record(text: currentText, summary: text)
         resizePanelToFitContent()
-        logger.info("Translation succeeded")
+        logLookupLatency("Translation completed")
     }
 
     /// Called by TranslationView when Apple Translation fails.
     func didFailTranslation(_ error: Error, requestID: Int) {
         guard requestID == currentRequestID else { return }
+        // The most likely cause is a session gone bad — drop the resident loop
+        // so the next lookup starts a fresh session.
+        resetTranslationSession()
+        guard dictionaryResult == nil else { return }
         translationError = error.localizedDescription
-        pendingTranslation = nil
         isTranslating = false
         resizePanelToFitContent()
         logger.error("Translation failed: \(error.localizedDescription)")
@@ -560,26 +662,92 @@ final class AppState: ObservableObject {
     /// Called by TranslationView after batched dictionary definition translation succeeds.
     func didFinishDictionaryTranslation(_ result: DictionaryResult, requestID: Int) {
         guard requestID == currentRequestID else { return }
+        if let key = translationService.dictionaryLookupCandidate(from: currentText)?.lowercased() {
+            dictionaryCache.insert(result, for: key)
+        }
         dictionaryResult = result
-        pendingDictionaryResult = nil
         isTranslatingDefinitions = false
+        // The dictionary entry supersedes whatever the racing sentence
+        // translation produced (or the error it hit).
+        translation = nil
+        translationError = nil
         recentLookupStore.record(
             text: currentText,
             summary: result.meanings.first.map { $0.translatedDefinition ?? $0.definition }
         )
         resizePanelToFitContent()
-        logger.info("Dictionary definitions translated")
+        logLookupLatency("Dictionary definitions translated")
     }
 
     /// Called by TranslationView when dictionary translation fails — fall back to English-only result.
+    /// The English-only entry is shown but deliberately not cached, so the next
+    /// lookup of the word retries the translation.
     func didFailDictionaryTranslation(fallback: DictionaryResult, error: Error, requestID: Int) {
         guard requestID == currentRequestID else { return }
+        resetTranslationSession()
         dictionaryResult = fallback
-        pendingDictionaryResult = nil
         isTranslatingDefinitions = false
         recentLookupStore.record(text: currentText, summary: fallback.meanings.first?.definition)
         resizePanelToFitContent()
         logger.error("Dictionary translation failed, showing English-only: \(error.localizedDescription)")
+    }
+
+    // MARK: - Translation Session Hub
+
+    /// True while a resident translation loop is consuming work directly.
+    var hasLiveTranslationSession: Bool { translationWorkContinuation != nil }
+
+    /// True when work is parked waiting for the session task to (re)start.
+    var hasPendingTranslationWork: Bool { pendingTranslationWork != nil }
+
+    /// Called by TranslationView's session task when it (re)starts: hands the
+    /// task a fresh work stream and flushes any request that was parked.
+    func beginTranslationWorkStream() -> AsyncStream<TranslationWork> {
+        translationWorkContinuation?.finish()
+        translationWorkStreamGeneration += 1
+        let generation = translationWorkStreamGeneration
+        let (stream, continuation) = AsyncStream.makeStream(of: TranslationWork.self)
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.translationWorkStreamGeneration == generation else { return }
+                self.translationWorkContinuation = nil
+            }
+        }
+        translationWorkContinuation = continuation
+        if let pending = pendingTranslationWork {
+            pendingTranslationWork = nil
+            continuation.yield(pending)
+        }
+        logger.info("Translation work stream started (generation \(generation))")
+        return stream
+    }
+
+    /// Routes work to the live session loop, or parks it and pokes SwiftUI to
+    /// (re)start the session task when none is running.
+    private func enqueueTranslationWork(_ work: TranslationWork) {
+        if let continuation = translationWorkContinuation,
+           case .enqueued = continuation.yield(work) {
+            return
+        }
+        translationWorkContinuation = nil
+        pendingTranslationWork = work
+        translationWorkTrigger += 1
+    }
+
+    /// Ends the resident loop so the next lookup starts a fresh session.
+    private func resetTranslationSession() {
+        translationWorkContinuation?.finish()
+        translationWorkContinuation = nil
+    }
+
+    /// Logs how long the current lookup took from `startTranslation` to a
+    /// user-visible result — the number to watch when tuning latency.
+    private func logLookupLatency(_ label: String) {
+        guard let start = lookupStartedAt else { return }
+        let elapsed = start.duration(to: .now)
+        let milliseconds = Double(elapsed.components.seconds) * 1000
+            + Double(elapsed.components.attoseconds) / 1e15
+        logger.info("\(label) in \(Int(milliseconds)) ms")
     }
 
     // MARK: - TTS Playback
@@ -923,9 +1091,13 @@ final class AppState: ObservableObject {
         isPanelVisible = true
 
         DispatchQueue.main.async {
-            let panelContent = TranslationView(appState: self)
-            let hostingController = NSHostingController(rootView: panelContent)
-            panel.contentViewController = hostingController
+            // Created once and reused across shows: this view hosts the
+            // resident Apple Translation session task, and rebuilding it would
+            // tear the warm session down — re-paying session startup on every
+            // lookup. Content stays current through the observed AppState.
+            if panel.contentViewController == nil {
+                panel.contentViewController = NSHostingController(rootView: TranslationView(appState: self))
+            }
             panel.setContentSize(NSSize(width: 420, height: 180))
             // Fixed position: dead center, every show. Assigning the content
             // view controller resizes the window, so centering must come after.

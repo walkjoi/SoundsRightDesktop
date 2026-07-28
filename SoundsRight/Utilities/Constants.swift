@@ -106,6 +106,39 @@ enum ActivationMode: String, CaseIterable {
     }
 }
 
+/// How lookups are initiated: the global keyboard shortcuts only (default), or
+/// additionally by selecting text with the mouse and letting the pointer rest.
+enum ActivationTrigger: String, CaseIterable, Identifiable {
+    case shortcut = "shortcut"
+    case hover = "hover"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .shortcut: return "Keyboard Shortcut"
+        case .hover: return "Hover"
+        }
+    }
+
+    /// Shown under the trigger picker in Settings.
+    var settingsNote: String {
+        switch self {
+        case .shortcut:
+            return "Lookups start when you press one of the shortcuts above."
+        case .hover:
+            return "Select text with the mouse, then rest the pointer for a moment to translate and speak it. The shortcuts keep working too."
+        }
+    }
+}
+
+/// Who initiated an activation. Hover triggers fire speculatively (any mouse
+/// selection arms them), so their failures stay quiet instead of toasting.
+enum ActivationSource {
+    case userInitiated
+    case hover
+}
+
 enum AppConstants {
     static let dictionaryAPIBaseURL = "https://api.dictionaryapi.dev/api/v2/entries/en/"
     static let edgeTTSEndpoint = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
@@ -120,12 +153,27 @@ enum AppConstants {
     /// Size cap for the on-disk audio cache (Application Support/SoundsRight/AudioCache).
     static let audioCacheDiskMaxBytes = 50 * 1024 * 1024
     static let defaultVoice = TTSVoice.avaNeural
+    /// Entry cap for the in-memory translation and dictionary result caches.
+    static let lookupCacheMaxEntries = 200
     /// How many automatic history entries to keep (menu bar → Recent).
     static let recentLookupsMaxEntries = 20
     /// How many recent lookups the menu bar dropdown shows.
     static let recentLookupsMenuLimit = 4
     /// How long a transient toast stays on screen before fading out.
     static let toastDisplayDuration: TimeInterval = 1.6
+    /// Hover trigger: minimum mouse-drag distance (pt) for a mouse-up to be
+    /// treated as a text-selection drag rather than a plain click.
+    static let hoverSelectionDragThreshold: CGFloat = 6
+    /// Hover trigger: how long the pointer must rest before the lookup fires.
+    static let hoverDwellSeconds: TimeInterval = 0.7
+    /// Hover trigger: pointer drift (pt) still counted as "resting" while the
+    /// dwell timer runs.
+    static let hoverPointerTolerance: CGFloat = 8
+    /// Hover trigger: how long after a selection gesture a pointer rest can
+    /// still fire the lookup before the gesture expires.
+    static let hoverArmWindowSeconds: TimeInterval = 4
+    /// Hover trigger: how often the pointer is sampled while a gesture is armed.
+    static let hoverPollIntervalNanoseconds: UInt64 = 100_000_000
     /// Distributed notification tccd posts when the accessibility trust table
     /// changes — the live signal that the user just granted/revoked access.
     static let accessibilityTrustChangedNotification = "com.apple.accessibility.api"
