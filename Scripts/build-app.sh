@@ -10,16 +10,40 @@
 # and the SwiftUI previews macro plugin ships only with full Xcode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
 
 CONFIG="${1:-release}"
 APP="build.noindex/SoundsRight.app"
 
-swift build -c "$CONFIG"
+# --- @State macro workaround (Command Line Tools only) -----------------------
+# The macOS 27 SDK ships `@State` as a `State()` macro whose `SwiftUIMacros`
+# compiler plugin is bundled only with full Xcode. Under CLT the plugin is
+# missing, so `swift build` fails on every `@State`. Rather than depend on the
+# plugin, build from a copy of the sources in which each `@State` attribute is
+# rewritten to `@CLTState` — a drop-in property wrapper (SoundsRight/Utilities/
+# StateMacroShim.swift) that forwards to `SwiftUI.State`. The canonical tree is
+# left untouched; Xcode builds still use the real macro. See CLAUDE.md.
+SRC="build.noindex/src"
+mkdir -p "$SRC"
+# Mirror sources into the build copy (preserve .build for incremental builds).
+rsync -a --delete "$ROOT/SoundsRight/" "$SRC/SoundsRight/"
+# Reuse the canonical manifest, but rewrite the vendored-package path to an
+# absolute one so it still resolves from the relocated package root.
+cp "$ROOT/Package.swift" "$SRC/Package.swift"
+perl -pi -e "s{\.package\(path: \"Vendor/KeyboardShortcuts\"\)}{.package(path: \"$ROOT/Vendor/KeyboardShortcuts\")}" "$SRC/Package.swift"
+# Two forms: the `@State` attribute, and the bare `State(...)`/`State<...>`
+# storage initializer written in a view's `init` (e.g. `_deck = State(...)`).
+# The lookbehind leaves `.State` (qualified) and `StateObject` untouched, and
+# `[(<]` after the name skips `@StateObject` and other `State`-prefixed words.
+grep -rlE --include='*.swift' '@State|(^|[^.[:alnum:]_])State[(<]' "$SRC/SoundsRight" \
+    | xargs -r perl -pi -e 's/\@State\b/\@CLTState/g; s/(?<![.\w@])State(?=[(<])/CLTState/g'
+
+swift build -c "$CONFIG" --package-path "$SRC"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp ".build/$CONFIG/SoundsRight" "$APP/Contents/MacOS/SoundsRight"
+cp "$SRC/.build/$CONFIG/SoundsRight" "$APP/Contents/MacOS/SoundsRight"
 
 # Substitute the Xcode build-setting variables Info.plist expects.
 sed -e 's/\$(EXECUTABLE_NAME)/SoundsRight/g' \
@@ -31,7 +55,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # SPM resource bundles (e.g. KeyboardShortcuts localizations) must sit in
 # Contents/Resources for Bundle.module to resolve at runtime.
-for bundle in ".build/$CONFIG"/*.bundle; do
+for bundle in "$SRC/.build/$CONFIG"/*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 
