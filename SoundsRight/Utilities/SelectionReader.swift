@@ -57,18 +57,11 @@ struct SelectionReader {
         let oldChangeCount = pasteboard.changeCount
         let savedItems = snapshot(of: pasteboard)
 
-        let keyCode = copyKeyCode()
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+        let keyCode = KeyboardLayout.commandKeyCode(for: "c", fallback: CGKeyCode(kVK_ANSI_C))
+        guard KeyboardLayout.postCommandKeystroke(keyCode: keyCode) else {
             logger.warning("Failed to create CGEvents for Cmd+C simulation")
             return .failure(.eventCreationFailed)
         }
-
-        keyDown.flags = CGEventFlags.maskCommand
-        keyUp.flags = CGEventFlags.maskCommand
-        keyDown.post(tap: CGEventTapLocation.cghidEventTap)
-        keyUp.post(tap: CGEventTapLocation.cghidEventTap)
 
         guard let text = await waitForCopiedText(
             on: pasteboard,
@@ -138,54 +131,6 @@ struct SelectionReader {
         guard !items.isEmpty, pasteboard.changeCount == changeCount else { return }
         pasteboard.clearContents()
         pasteboard.writeObjects(items)
-    }
-
-    // MARK: - Keyboard Layout
-
-    /// Resolves the key that produces "c" with Cmd held in the current keyboard layout —
-    /// hardcoding kVK_ANSI_C would send Cmd+J on Dvorak and similar layouts. The Command
-    /// modifier state matters: "Dvorak — QWERTY ⌘" layouts remap letters only when Cmd is down.
-    private static func copyKeyCode() -> CGKeyCode {
-        let qwertyC: CGKeyCode = 0x08 // kVK_ANSI_C
-
-        guard let inputSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
-              let layoutDataPointer = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
-            return qwertyC
-        }
-
-        let layoutData = Unmanaged<CFData>.fromOpaque(layoutDataPointer).takeUnretainedValue() as Data
-        let commandModifiers = UInt32((cmdKey >> 8) & 0xFF)
-
-        for keyCode in 0..<CGKeyCode(128) {
-            var deadKeyState: UInt32 = 0
-            var actualLength = 0
-            var characters = [UniChar](repeating: 0, count: 4)
-
-            let status = layoutData.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) -> OSStatus in
-                guard let layout = buffer.bindMemory(to: UCKeyboardLayout.self).baseAddress else {
-                    return OSStatus(-1)
-                }
-                return UCKeyTranslate(
-                    layout,
-                    UInt16(keyCode),
-                    UInt16(kUCKeyActionDown),
-                    commandModifiers,
-                    UInt32(LMGetKbdType()),
-                    OptionBits(kUCKeyTranslateNoDeadKeysBit),
-                    &deadKeyState,
-                    characters.count,
-                    &actualLength,
-                    &characters
-                )
-            }
-
-            if status == noErr, actualLength == 1,
-               characters[0] == 0x63 || characters[0] == 0x43 { // 'c' or 'C'
-                return keyCode
-            }
-        }
-
-        return qwertyC
     }
 
     // MARK: - Permission

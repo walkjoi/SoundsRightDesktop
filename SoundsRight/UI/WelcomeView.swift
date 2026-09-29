@@ -60,7 +60,20 @@ struct WelcomeView: View {
                 }
             }
 
-            stepRow(number: "3", title: "Try it on this sentence", isLast: true) {
+            stepRow(number: "3", title: "Or speak instead of typing") {
+                VStack(alignment: .leading, spacing: 6) {
+                    shortcutLine(
+                        label: "Dictate in Chinese or English",
+                        shortcut: AppState.shortcutLabel(for: .dictation)
+                    )
+                    Text("Hold it while you speak, or tap once to start and again to stop. The text lands wherever your cursor is.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            stepRow(number: "4", title: "Try it on this sentence", isLast: true) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Serendipity means finding something good without looking for it.")
                         .font(.system(size: 13, weight: .medium))
@@ -86,7 +99,7 @@ struct WelcomeView: View {
             }
         }
         .padding(24)
-        .frame(width: 460, height: 512)
+        .frame(width: 460, height: 600)
         .background(.background)
         // Re-check the grant whenever the user returns from System Settings.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in

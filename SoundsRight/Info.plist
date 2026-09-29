@@ -28,6 +28,10 @@
 	<string></string>
 	<key>NSPrincipalClass</key>
 	<string>$(PRINCIPAL_CLASS)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SoundsRight records from the microphone while you hold the dictation shortcut, and transcribes it to text.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>SoundsRight uses macOS on-device speech recognition to turn dictation into text while the Whisper model finishes downloading.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright 2026 SoundsRight. All rights reserved.</string>
 </dict>

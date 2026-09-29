@@ -17,6 +17,9 @@ struct SettingsView: View {
                 SettingsTab(title: "Playback", icon: "speaker.wave.2", isSelected: selectedTab == 1) {
                     selectedTab = 1
                 }
+                SettingsTab(title: "Dictation", icon: "mic", isSelected: selectedTab == 2) {
+                    selectedTab = 2
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -26,19 +29,20 @@ struct SettingsView: View {
 
             // Content
             Group {
-                if selectedTab == 0 {
-                    ScrollView(.vertical, showsIndicators: false) {
+                ScrollView(.vertical, showsIndicators: false) {
+                    switch selectedTab {
+                    case 0:
                         GeneralSettingsTab(appState: appState)
-                    }
-                } else {
-                    ScrollView(.vertical, showsIndicators: false) {
+                    case 1:
                         PlaybackSettingsTab(appState: appState)
+                    default:
+                        DictationSettingsTab(controller: appState.dictationController)
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(width: 420, height: 420)
+        .frame(width: 440, height: 460)
         .background(.background)
     }
 }
@@ -461,7 +465,8 @@ private struct SpeedOptionRow: View {
     }
 }
 
-private struct SettingsSection<Content: View>: View {
+/// Shared by every settings tab, including `DictationSettingsTab` in its own file.
+struct SettingsSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
@@ -482,7 +487,7 @@ private struct SettingsSection<Content: View>: View {
     }
 }
 
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     let label: String
     @ViewBuilder let control: Control
 

@@ -17,12 +17,18 @@ let package = Package(
         // stripped: the SwiftUI previews macro plugin ships only with full
         // Xcode, so the upstream package cannot compile under Command Line
         // Tools alone. Xcode builds (project.yml) still use upstream.
-        .package(path: "Vendor/KeyboardShortcuts")
+        .package(path: "Vendor/KeyboardShortcuts"),
+        // Pure-Swift Core ML runtime for Whisper — no C++ toolchain, so the
+        // Command Line Tools build path keeps working.
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0")
     ],
     targets: [
         .executableTarget(
             name: "SoundsRight",
-            dependencies: ["KeyboardShortcuts"],
+            dependencies: [
+                "KeyboardShortcuts",
+                .product(name: "WhisperKit", package: "WhisperKit")
+            ],
             path: "SoundsRight",
             exclude: [
                 "Info.plist",

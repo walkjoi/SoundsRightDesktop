@@ -10,6 +10,9 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts.git
     from: "2.0.0"
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit.git
+    from: "0.18.0"
 
 targets:
   SoundsRight:
@@ -33,6 +36,8 @@ targets:
 
     dependencies:
       - package: KeyboardShortcuts
+      - package: WhisperKit
+        product: WhisperKit
 
     settings:
       SWIFT_VERSION: "5.9"

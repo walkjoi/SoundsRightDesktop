@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var collectionStore: CollectionStore
     @ObservedObject var recentLookupStore: RecentLookupStore
+    @ObservedObject var dictationController: DictationController
 
     @Environment(\.dismiss) private var dismiss
 
@@ -12,6 +13,7 @@ struct MenuBarView: View {
         self.appState = appState
         self.collectionStore = appState.collectionStore
         self.recentLookupStore = appState.recentLookupStore
+        self.dictationController = appState.dictationController
     }
 
     var body: some View {
@@ -32,6 +34,15 @@ struct MenuBarView: View {
                 detail: AppState.shortcutLabel(for: .translateClipboard)
             ) {
                 activateFromMenu(.translation)
+            }
+
+            MenuRow(
+                icon: dictationController.phase == .recording ? "stop.circle.fill" : "mic",
+                label: dictationController.phase == .recording ? "Stop Dictation" : "Dictate",
+                detail: dictationDetail
+            ) {
+                dismiss()
+                dictationController.toggleFromMenu()
             }
 
             if !recentLookupStore.items.isEmpty {
@@ -85,6 +96,17 @@ struct MenuBarView: View {
         }
         .padding(.vertical, 4)
         .frame(width: 248)
+    }
+
+    /// The hotkey normally, but a download percentage while the Whisper model
+    /// installs — the menu is where the user goes to find out why dictation is
+    /// quietly using the built-in engine.
+    private var dictationDetail: String {
+        if case .downloading(let fraction) = dictationController.modelStatus,
+           dictationController.preferredEngine == .whisper {
+            return "Model \(Int(fraction * 100))%"
+        }
+        return AppState.shortcutLabel(for: .dictation)
     }
 
     /// Close the menu window first so key focus returns to the user's app

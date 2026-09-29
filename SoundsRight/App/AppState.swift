@@ -143,6 +143,7 @@ final class AppState: ObservableObject {
     private let hoverTriggerMonitor = HoverTriggerMonitor()
     let collectionStore = CollectionStore()
     let recentLookupStore = RecentLookupStore()
+    let dictationController = DictationController()
 
     // MARK: - Panel Management
 
@@ -253,17 +254,48 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Dictation feeds back through AppState only for the surfaces it shares
+        // with lookups: the cursor toast, the Esc claim, and the Accessibility
+        // alert that a failed paste would otherwise leave unexplained.
+        dictationController.showToast = { [weak self] message, style in
+            self?.showToast(message, style: style)
+        }
+        dictationController.setCancelShortcutEnabled = { [weak self] enabled in
+            self?.shortcutManager.setDictationCancelEnabled(enabled)
+        }
+        dictationController.requestAccessibilityGrant = { [weak self] in
+            self?.presentAccessibilityAlert()
+        }
+        await dictationController.initialize()
+
         shortcutManager.register(
-            onTranslate: { [weak self] in
-                Task { @MainActor in
-                    await self?.activate(mode: .translation)
+            ShortcutManager.Handlers(
+                onTranslate: { [weak self] in
+                    Task { @MainActor in
+                        await self?.activate(mode: .translation)
+                    }
+                },
+                onSoundOnly: { [weak self] in
+                    Task { @MainActor in
+                        await self?.activate(mode: .soundOnly)
+                    }
+                },
+                onDictationKeyDown: { [weak self] saveRecording in
+                    MainActor.assumeIsolated {
+                        self?.dictationController.handleKeyDown(saveRecording: saveRecording)
+                    }
+                },
+                onDictationKeyUp: { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.dictationController.handleKeyUp()
+                    }
+                },
+                onDictationCancel: { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.dictationController.cancel()
+                    }
                 }
-            },
-            onSoundOnly: { [weak self] in
-                Task { @MainActor in
-                    await self?.activate(mode: .soundOnly)
-                }
-            }
+            )
         )
 
         logger.info("Keyboard shortcuts registered")
@@ -286,6 +318,7 @@ final class AppState: ObservableObject {
         logger.info("Shutting down app")
         shortcutManager.unregister()
         hoverTriggerMonitor.stop()
+        await dictationController.shutdown()
         audioPlayer.stop()
         await ttsManager.shutdown()
         await collectionStore.flush()
@@ -1378,7 +1411,7 @@ final class AppState: ObservableObject {
     func showWelcomeWindow() {
         if welcomeWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 512),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 600),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
