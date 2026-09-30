@@ -177,4 +177,36 @@ enum AppConstants {
     /// Distributed notification tccd posts when the accessibility trust table
     /// changes — the live signal that the user just granted/revoked access.
     static let accessibilityTrustChangedNotification = "com.apple.accessibility.api"
+
+    // MARK: - Dictation
+
+    /// Capture rate for dictation. Whisper's feature extractor expects exactly
+    /// 16 kHz, and both Apple engines accept it, so nothing resamples twice.
+    static let dictationSampleRate: Double = 16_000
+    /// Clips shorter than this are treated as a misfire rather than speech.
+    static let dictationMinDuration: TimeInterval = 0.4
+    /// Hard ceiling on one dictation, so a forgotten toggle can't record forever.
+    static let dictationMaxDuration: TimeInterval = 180
+    /// Extra audio kept after the stop request, so the last syllable — released
+    /// together with the hotkey — is not clipped.
+    static let dictationStopTailDuration: TimeInterval = 0.25
+    /// Peak amplitude below which a clip counts as silence. Whisper hallucinates
+    /// fluent sentences out of room tone, so these never reach the model.
+    static let dictationSilencePeakThreshold: Float = 0.012
+    /// Press-and-hold longer than this is push-to-talk (release stops). A quicker
+    /// tap latches recording on until the shortcut is pressed a second time.
+    static let dictationHoldThreshold: TimeInterval = 0.35
+    /// How often the HUD's level meter and elapsed timer refresh.
+    static let dictationMeterIntervalNanoseconds: UInt64 = 50_000_000
+    /// Default Core ML Whisper build.
+    static let defaultWhisperModel = WhisperModelVariant.largeV3TurboCompressed
+    /// Hugging Face repository the Core ML Whisper builds come from.
+    static let whisperModelRepository = "argmaxinc/whisperkit-coreml"
+    /// Minimum lead the winning language needs before a two-way detection is
+    /// trusted; below it we keep the previous language instead of flip-flopping.
+    static let dictationLanguageConfidenceMargin: Float = 0.10
+    /// How long the transcribed text stays on the pasteboard before the user's
+    /// previous clipboard is restored. Electron and browser targets service a
+    /// synthesized ⌘V well after the event is posted.
+    static let dictationClipboardRestoreDelay: TimeInterval = 1.5
 }

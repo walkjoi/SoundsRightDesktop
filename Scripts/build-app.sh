@@ -1,13 +1,16 @@
 #!/bin/bash
-# Builds SoundsRight.app using SwiftPM + Command Line Tools only (no Xcode,
-# no Apple Developer account). Output: build.noindex/SoundsRight.app, ad-hoc
-# signed. The .noindex suffix keeps Spotlight/Launchpad from listing the build
-# artifact as a second "SoundsRight" alongside the installed copy.
+# Builds SoundsRight.app using SwiftPM, without needing an Apple Developer
+# account. Output: build.noindex/SoundsRight.app, ad-hoc signed. The .noindex
+# suffix keeps Spotlight/Launchpad from listing the build artifact as a second
+# "SoundsRight" alongside the installed copy.
 #
 # Usage: Scripts/build-app.sh [release]
-# The debug configuration does NOT build under Command Line Tools: SwiftPM
-# defines DEBUG there, which compiles the #if DEBUG-wrapped #Preview blocks,
-# and the SwiftUI previews macro plugin ships only with full Xcode.
+#
+# Toolchain: as of SDK 27 SwiftUI's @State is a macro, and macro plugins ship
+# only with full Xcode — so a Command-Line-Tools-only toolchain can no longer
+# compile any SwiftUI view. Xcode is therefore required, but it need not be the
+# active developer directory: this script points at it directly, so
+# `xcode-select` can stay on the Command Line Tools.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -15,30 +18,23 @@ ROOT="$(pwd)"
 CONFIG="${1:-release}"
 APP="build.noindex/SoundsRight.app"
 
-# --- @State macro workaround (Command Line Tools only) -----------------------
-# The macOS 27 SDK ships `@State` as a `State()` macro whose `SwiftUIMacros`
-# compiler plugin is bundled only with full Xcode. Under CLT the plugin is
-# missing, so `swift build` fails on every `@State`. Rather than depend on the
-# plugin, build from a copy of the sources in which each `@State` attribute is
-# rewritten to `@CLTState` — a drop-in property wrapper (SoundsRight/Utilities/
-# StateMacroShim.swift) that forwards to `SwiftUI.State`. The canonical tree is
-# left untouched; Xcode builds still use the real macro. See CLAUDE.md.
-SRC="build.noindex/src"
-mkdir -p "$SRC"
-# Mirror sources into the build copy (preserve .build for incremental builds).
-rsync -a --delete "$ROOT/SoundsRight/" "$SRC/SoundsRight/"
-# Reuse the canonical manifest, but rewrite the vendored-package path to an
-# absolute one so it still resolves from the relocated package root.
-cp "$ROOT/Package.swift" "$SRC/Package.swift"
-perl -pi -e "s{\.package\(path: \"Vendor/KeyboardShortcuts\"\)}{.package(path: \"$ROOT/Vendor/KeyboardShortcuts\")}" "$SRC/Package.swift"
-# Two forms: the `@State` attribute, and the bare `State(...)`/`State<...>`
-# storage initializer written in a view's `init` (e.g. `_deck = State(...)`).
-# The lookbehind leaves `.State` (qualified) and `StateObject` untouched, and
-# `[(<]` after the name skips `@StateObject` and other `State`-prefixed words.
-grep -rlE --include='*.swift' '@State|(^|[^.[:alnum:]_])State[(<]' "$SRC/SoundsRight" \
-    | xargs -r perl -pi -e 's/\@State\b/\@CLTState/g; s/(?<![.\w@])State(?=[(<])/CLTState/g'
+# libSwiftUIMacros.dylib is what expands @State; it lives in the Xcode platform
+# directory and has no Command Line Tools equivalent.
+SWIFTUI_MACROS="Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
+CURRENT_DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
 
-swift build -c "$CONFIG" --package-path "$SRC"
+if [ ! -f "$CURRENT_DEVELOPER_DIR/$SWIFTUI_MACROS" ]; then
+    if [ -f "/Applications/Xcode.app/Contents/Developer/$SWIFTUI_MACROS" ]; then
+        export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+        echo "Using the Xcode toolchain at $DEVELOPER_DIR (SwiftUI macro plugins)"
+    else
+        echo "error: Xcode is required — SwiftUI's macro plugins ship only with it," >&2
+        echo "       and $CURRENT_DEVELOPER_DIR does not provide them." >&2
+        exit 1
+    fi
+fi
+
+swift build -c "$CONFIG"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -59,9 +55,12 @@ for bundle in "$SRC/.build/$CONFIG"/*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 
-# App icon: SwiftPM can't compile the asset catalog (actool ships with Xcode),
-# so build an .icns from the same PNGs with iconutil (part of macOS) and point
-# CFBundleIconFile at it. Xcode builds get the icon from Assets.xcassets instead.
+# Icons: SwiftPM can't compile the asset catalog (actool ships with Xcode), so
+# the script packs what Xcode would have produced from Assets.xcassets.
+# Xcode builds still get both icons from the catalog via
+# ASSETCATALOG_COMPILER_APPICON_NAME / Image("MenuBarIcon").
+
+# Dock / Finder / About: same PNGs → .icns, then CFBundleIconFile.
 ICONSET_SRC="SoundsRight/Resources/Assets.xcassets/AppIcon.appiconset"
 if command -v iconutil >/dev/null && [ -e "$ICONSET_SRC/AppIcon-512x512@2x.png" ]; then
     ICONSET="build.noindex/AppIcon.iconset"
@@ -74,6 +73,15 @@ if command -v iconutil >/dev/null && [ -e "$ICONSET_SRC/AppIcon-512x512@2x.png" 
     iconutil -c icns -o "$APP/Contents/Resources/AppIcon.icns" "$ICONSET"
     rm -rf "$ICONSET"
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist"
+fi
+
+# Menu bar: NSImage(named: "MenuBarIcon") resolves these loose PNGs the same
+# way it resolves a compiled imageset. Template rendering is forced in
+# SoundsRightApp (the catalog's template-rendering-intent is lost without actool).
+MENUBAR_SRC="SoundsRight/Resources/Assets.xcassets/MenuBarIcon.imageset"
+if [ -e "$MENUBAR_SRC/MenuBarIcon.png" ]; then
+    cp "$MENUBAR_SRC/MenuBarIcon.png" "$APP/Contents/Resources/MenuBarIcon.png"
+    cp "$MENUBAR_SRC/MenuBarIcon@2x.png" "$APP/Contents/Resources/MenuBarIcon@2x.png"
 fi
 
 # Prefer the stable self-signed identity (create it once with

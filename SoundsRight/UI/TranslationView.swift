@@ -62,8 +62,11 @@ struct TranslationView: View {
 
         let before = AttributedString(String(text[text.startIndex..<range.lowerBound]))
         var spoken = AttributedString(String(text[range]))
-        spoken.backgroundColor = Color.accentColor.opacity(0.22)
-        spoken.foregroundColor = Color.primary
+        // Subscripted by attribute type rather than by dynamic member: the
+        // key-path form captures a non-Sendable KeyPath, which strict
+        // concurrency rejects.
+        spoken[AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] = Color.accentColor.opacity(0.22)
+        spoken[AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] = Color.primary
         let after = AttributedString(String(text[range.upperBound...]))
         return before + spoken + after
     }
