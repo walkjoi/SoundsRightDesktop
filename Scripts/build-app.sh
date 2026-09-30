@@ -13,6 +13,7 @@
 # `xcode-select` can stay on the Command Line Tools.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
 
 CONFIG="${1:-release}"
 APP="build.noindex/SoundsRight.app"
@@ -38,7 +39,7 @@ swift build -c "$CONFIG"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp ".build/$CONFIG/SoundsRight" "$APP/Contents/MacOS/SoundsRight"
+cp "$SRC/.build/$CONFIG/SoundsRight" "$APP/Contents/MacOS/SoundsRight"
 
 # Substitute the Xcode build-setting variables Info.plist expects.
 sed -e 's/\$(EXECUTABLE_NAME)/SoundsRight/g' \
@@ -50,7 +51,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # SPM resource bundles (e.g. KeyboardShortcuts localizations) must sit in
 # Contents/Resources for Bundle.module to resolve at runtime.
-for bundle in ".build/$CONFIG"/*.bundle; do
+for bundle in "$SRC/.build/$CONFIG"/*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 
