@@ -4,8 +4,11 @@ import Translation
 struct TranslationView: View {
     @ObservedObject var appState: AppState
 
+    /// Whitespace presence rather than a token count: the first space settles
+    /// it, and this is read on every view update.
     private var isSingleWordSelection: Bool {
-        appState.currentText.split(whereSeparator: \.isWhitespace).count == 1
+        let text = appState.currentText
+        return !text.isEmpty && !text.contains(where: \.isWhitespace)
     }
 
     var body: some View {
@@ -54,21 +57,23 @@ struct TranslationView: View {
     /// whitespace-separated token; a mismatch simply drops the highlight.
     private var highlightedSourceText: AttributedString {
         let text = appState.currentText
+        var attributed = AttributedString(text)
+
         guard let wordIndex = appState.spokenWordIndex,
-              let range = Self.wordRange(in: text, wordIndex: wordIndex)
+              let wordRange = Self.wordRange(in: text, wordIndex: wordIndex),
+              let range = Range(wordRange, in: attributed)
         else {
-            return AttributedString(text)
+            return attributed
         }
 
-        let before = AttributedString(String(text[text.startIndex..<range.lowerBound]))
-        var spoken = AttributedString(String(text[range]))
         // Subscripted by attribute type rather than by dynamic member: the
         // key-path form captures a non-Sendable KeyPath, which strict
         // concurrency rejects.
-        spoken[AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] = Color.accentColor.opacity(0.22)
-        spoken[AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] = Color.primary
-        let after = AttributedString(String(text[range.upperBound...]))
-        return before + spoken + after
+        attributed[range][AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] =
+            Color.accentColor.opacity(0.22)
+        attributed[range][AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] =
+            Color.primary
+        return attributed
     }
 
     /// Range of the nth whitespace-separated token of `text`.

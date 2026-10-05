@@ -74,9 +74,13 @@ actor EdgeTTSService {
                 switch message {
                 case .string(let stringMessage):
                     logger.debug("Received string message")
-                    if stringMessage.contains("Path:audio.metadata") {
+                    // Confined to the header block: the server interleaves one
+                    // metadata message per word with the audio, and the Path
+                    // header always precedes the JSON body.
+                    let header = Self.headerBlock(of: stringMessage)
+                    if header.contains("Path:audio.metadata") {
                         wordBoundaries.append(contentsOf: Self.parseWordBoundaries(from: stringMessage))
-                    } else if stringMessage.contains("Path:turn.end") {
+                    } else if header.contains("Path:turn.end") {
                         logger.info("Received turn.end, stopping audio reception")
                         receivingAudio = false
                     }
@@ -158,10 +162,22 @@ actor EdgeTTSService {
         }
     }
 
+    /// Everything before the blank line that ends the message's header block.
+    private static func headerBlock(of message: String) -> Substring {
+        guard let separator = message.range(of: Self.headerSeparator) else { return message[...] }
+        return message[message.startIndex..<separator.lowerBound]
+    }
+
+    private static let headerSeparator = "\r\n\r\n"
+
+    /// Shared: the server sends one metadata message per word, and building a
+    /// decoder per message costs more than decoding the handful of bytes in it.
+    private static let metadataDecoder = JSONDecoder()
+
     private static func parseWordBoundaries(from message: String) -> [WordBoundary] {
-        guard let bodyStart = message.range(of: "\r\n\r\n")?.upperBound,
+        guard let bodyStart = message.range(of: Self.headerSeparator)?.upperBound,
               let body = message[bodyStart...].data(using: .utf8),
-              let payload = try? JSONDecoder().decode(MetadataPayload.self, from: body)
+              let payload = try? metadataDecoder.decode(MetadataPayload.self, from: body)
         else {
             return []
         }

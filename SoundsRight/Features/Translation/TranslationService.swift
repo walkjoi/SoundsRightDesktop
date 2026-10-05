@@ -15,12 +15,14 @@ actor TranslationService {
         return candidate
     }
 
+    /// `.urlPathAllowed` leaves "/:@" unescaped, which would splice extra path
+    /// segments into the request for selections like "and/or".
+    private static let pathComponentAllowed = CharacterSet.urlPathAllowed
+        .subtracting(CharacterSet(charactersIn: "/:@"))
+
     func lookupDictionaryEntry(for word: String) async throws -> DictionaryResult {
-        // .urlPathAllowed leaves "/:@" unescaped, which would splice extra path segments
-        // into the request for selections like "and/or".
-        let pathComponentAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/:@"))
         guard
-            let encodedWord = word.addingPercentEncoding(withAllowedCharacters: pathComponentAllowed),
+            let encodedWord = word.addingPercentEncoding(withAllowedCharacters: Self.pathComponentAllowed),
             let url = URL(string: AppConstants.dictionaryAPIBaseURL + encodedWord)
         else {
             throw TranslationError.failed("Failed to prepare dictionary lookup.")

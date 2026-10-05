@@ -1,14 +1,17 @@
 import AVFoundation
-import Combine
 import os
 
 /// `@MainActor` because every caller (AppState, the SwiftUI views) already lives on the
 /// main actor, while AVFoundation delivers delegate callbacks on an undocumented thread —
 /// the `nonisolated` delegate methods hop back in before touching state.
+///
+/// Deliberately not an `ObservableObject`: every playback property the UI renders
+/// comes from `AppState.ttsState`, so publishing from here would only add a second
+/// source of truth — and anything polled (play position) would need a timer that
+/// keeps the main run loop awake for the whole of every playback.
 @MainActor
-final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
-    @Published var isPlaying: Bool = false
-    @Published var currentProgress: Double = 0.0
+final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
+    private(set) var isPlaying: Bool = false
 
     var onFinished: (() -> Void)?
 
@@ -19,7 +22,6 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var currentTime: TimeInterval { player?.currentTime ?? 0 }
 
     private var player: AVAudioPlayer?
-    private var progressTimer: Timer?
     private var lastAudioData: Data?
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "AudioPlayer")
 
@@ -43,7 +45,6 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
 
         isPlaying = true
-        startProgressTimer()
     }
 
     /// Applies a loop-mode change to the loaded player in place: enabling keeps
@@ -63,15 +64,12 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func pause() {
         player?.pause()
         isPlaying = false
-        stopProgressTimer()
     }
 
     func resume() {
         guard let player = player, !player.isPlaying else { return }
-        let resumeSuccess = player.play()
-        if resumeSuccess {
+        if player.play() {
             isPlaying = true
-            startProgressTimer()
         }
     }
 
@@ -79,8 +77,6 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
         player?.stop()
         player = nil
         isPlaying = false
-        currentProgress = 0.0
-        stopProgressTimer()
     }
 
     /// Stops playback and clears cached audio data so stale audio cannot be replayed.
@@ -104,30 +100,11 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
         try play(data: audioData)
     }
 
-    private func startProgressTimer() {
-        stopProgressTimer()
-
-        // Timer fires on the main run loop, so assuming main-actor isolation is safe.
-        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let player = self.player, player.duration > 0 else { return }
-                self.currentProgress = player.currentTime / player.duration
-            }
-        }
-    }
-
-    private func stopProgressTimer() {
-        progressTimer?.invalidate()
-        progressTimer = nil
-    }
-
     // MARK: - AVAudioPlayerDelegate
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
             self.isPlaying = false
-            self.currentProgress = 0.0
-            self.stopProgressTimer()
             self.onFinished?()
         }
     }
@@ -135,8 +112,6 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         Task { @MainActor in
             self.isPlaying = false
-            self.currentProgress = 0.0
-            self.stopProgressTimer()
             if let error {
                 self.logger.error("Audio decoding error: \(error.localizedDescription)")
             }

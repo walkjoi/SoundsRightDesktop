@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import Foundation
 import os
@@ -62,7 +63,12 @@ final class DictationRecorder {
     func start() throws {
         guard !isRecording else { return }
 
-        sink.reset()
+        // Capacity is claimed here, on the main actor, rather than left to grow
+        // under the tap: reallocating means a malloc and a copy of everything
+        // captured so far, on a real-time thread that must not block.
+        sink.reset(reservingSamples: Int(
+            AppConstants.dictationSampleRate * AppConstants.dictationCaptureReserveDuration
+        ))
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
 
@@ -214,6 +220,9 @@ final class DictationRecorder {
 private final class SampleSink: @unchecked Sendable {
     private let lock = NSLock()
     private var samples: [Float] = []
+    /// How much room `reset` claims up front, so a typical dictation never
+    /// reallocates while the tap is running.
+    private var reservedSamples = 0
     /// Peak of the most recent tap buffer, for the level meter.
     private var lastBufferPeak: Float = 0
 
@@ -222,11 +231,10 @@ private final class SampleSink: @unchecked Sendable {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return }
 
+        // Vectorized: this is the real-time path, and the peak is computed for
+        // every buffer whether or not the meter reads it.
         var peak: Float = 0
-        for index in 0..<frameCount {
-            let magnitude = abs(channel[index])
-            if magnitude > peak { peak = magnitude }
-        }
+        vDSP_maxmgv(channel, 1, &peak, vDSP_Length(frameCount))
 
         lock.lock()
         defer { lock.unlock() }
@@ -258,14 +266,19 @@ private final class SampleSink: @unchecked Sendable {
         defer { lock.unlock() }
         let captured = samples
         samples = []
+        samples.reserveCapacity(reservedSamples)
         lastBufferPeak = 0
         return captured
     }
 
-    func reset() {
+    func reset(reservingSamples: Int? = nil) {
         lock.lock()
         defer { lock.unlock() }
+        if let reservingSamples {
+            reservedSamples = reservingSamples
+        }
         samples = []
+        samples.reserveCapacity(reservedSamples)
         lastBufferPeak = 0
     }
 }

@@ -313,9 +313,7 @@ actor AppleSpeechTranscriber: DictationTranscribing {
         let expected: Double
         switch hypothesis.language {
         case .mandarin, .auto:
-            let characters = hypothesis.text.unicodeScalars.filter {
-                !CharacterSet.whitespacesAndNewlines.contains($0)
-            }.count
+            let characters = DictationTextCleaner.meaningfulScalarCount(hypothesis.text)
             observed = Double(characters) / audioDuration
             expected = 4.0
         case .english:
