@@ -46,11 +46,18 @@ enum EdgeTTSProtocol {
         return "X-RequestId:\(requestId)\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:\(timestamp)\r\nPath:ssml\r\n\r\n\(ssml)"
     }
 
+    /// Shared because formatter setup costs more than the formatting itself,
+    /// and this runs twice per synthesis. `ISO8601FormatStyle` rather than
+    /// `ISO8601DateFormatter` because the format style is `Sendable` and so can
+    /// be held in a static; the old class cannot under strict concurrency.
+    private static let timestampStyle = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: true,
+        timeZone: .gmt
+    )
+
     /// Returns a JavaScript-style ISO 8601 timestamp (e.g. "2025-04-10T12:00:00.000Z")
     private static func jsTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
+        timestampStyle.format(Date())
     }
 
     static func buildWebSocketURL(token: String) -> URL {

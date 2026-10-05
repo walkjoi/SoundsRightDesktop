@@ -187,6 +187,11 @@ enum AppConstants {
     static let dictationMinDuration: TimeInterval = 0.4
     /// Hard ceiling on one dictation, so a forgotten toggle can't record forever.
     static let dictationMaxDuration: TimeInterval = 180
+    /// How much capture buffer is reserved when recording starts. Covers a
+    /// normal dictation outright so the real-time tap never has to grow the
+    /// buffer, without reserving the full three-minute ceiling (11 MB) for a
+    /// clip that is usually a few seconds long.
+    static let dictationCaptureReserveDuration: TimeInterval = 20
     /// Extra audio kept after the stop request, so the last syllable — released
     /// together with the hotkey — is not clipped.
     static let dictationStopTailDuration: TimeInterval = 0.25

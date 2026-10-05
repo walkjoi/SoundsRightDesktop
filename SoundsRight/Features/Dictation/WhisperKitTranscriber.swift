@@ -33,6 +33,11 @@ actor WhisperKitTranscriber: DictationTranscribing {
     private var status: WhisperModelStatus = .notDownloaded
     private var onStatusChange: (@MainActor @Sendable (WhisperModelStatus) -> Void)?
 
+    /// Last fraction actually published. Download progress is reported per
+    /// received chunk, and every publish costs a hop onto the main actor and a
+    /// SwiftUI invalidation — far more often than a percentage readout changes.
+    private var publishedDownloadFraction: Double = -1
+
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "WhisperKitTranscriber")
 
     init(variant: WhisperModelVariant) {
@@ -217,6 +222,7 @@ actor WhisperKitTranscriber: DictationTranscribing {
 
         let variant = self.variant
         lastLoadFailure = nil
+        publishedDownloadFraction = 0
         publish(.downloading(fractionCompleted: 0))
 
         do {
@@ -265,7 +271,15 @@ actor WhisperKitTranscriber: DictationTranscribing {
     }
 
     private nonisolated func reportDownloadProgress(_ fraction: Double) {
-        Task { await self.publish(.downloading(fractionCompleted: fraction)) }
+        Task { await self.publishDownloadProgress(fraction) }
+    }
+
+    /// Forwards progress only once it has moved by a percentage point, the
+    /// smallest step any UI showing this renders.
+    private func publishDownloadProgress(_ fraction: Double) {
+        guard fraction - publishedDownloadFraction >= 0.01 else { return }
+        publishedDownloadFraction = fraction
+        publish(.downloading(fractionCompleted: fraction))
     }
 
     private static func friendlyLoadFailure(_ error: Error) -> String {

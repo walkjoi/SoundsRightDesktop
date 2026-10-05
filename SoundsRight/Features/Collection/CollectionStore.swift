@@ -5,6 +5,11 @@ import os
 final class CollectionStore: ObservableObject {
     @Published private(set) var items: [CollectionItem] = []
 
+    /// Normalized keys of everything in `items`, so membership is a hash
+    /// lookup. The panel's bookmark button asks on every view update, and
+    /// answering from `items` costs a trim and a lowercase per saved item.
+    private var keyIndex: Set<String> = []
+
     private let fileURL: URL
     private let logger = Logger(subsystem: "com.soundsright.desktop", category: "CollectionStore")
     private var pendingWrite: Task<Void, Never>?
@@ -12,21 +17,30 @@ final class CollectionStore: ObservableObject {
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? Self.defaultFileURL()
         self.items = loadFromDisk()
+        self.keyIndex = Set(items.map(\.normalizedKey))
     }
 
     // MARK: - Queries
 
     func contains(sourceText: String) -> Bool {
+        keyIndex.contains(CollectionItem.normalizedKey(for: sourceText))
+    }
+
+    /// The saved item matching `sourceText`, if any.
+    func item(forSourceText sourceText: String) -> CollectionItem? {
         let key = CollectionItem.normalizedKey(for: sourceText)
-        return items.contains { $0.normalizedKey == key }
+        guard keyIndex.contains(key) else { return nil }
+        return items.first { $0.normalizedKey == key }
     }
 
     // MARK: - Mutations
 
     @discardableResult
     func add(_ item: CollectionItem) -> Bool {
-        if contains(sourceText: item.sourceText) { return false }
+        let key = item.normalizedKey
+        if keyIndex.contains(key) { return false }
         items.insert(item, at: 0)
+        keyIndex.insert(key)
         schedulePersist()
         return true
     }
@@ -34,6 +48,7 @@ final class CollectionStore: ObservableObject {
     func remove(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items.remove(at: index)
+        rebuildKeyIndex()
         schedulePersist()
     }
 
@@ -41,8 +56,16 @@ final class CollectionStore: ObservableObject {
         let before = items.count
         items.removeAll { ids.contains($0.id) }
         if items.count != before {
+            rebuildKeyIndex()
             schedulePersist()
         }
+    }
+
+    /// Rebuilt rather than key-subtracted: two items can normalize to the same
+    /// key (saved before this index existed), so removing one must not drop the
+    /// key that the other still holds.
+    private func rebuildKeyIndex() {
+        keyIndex = Set(items.map(\.normalizedKey))
     }
 
     // MARK: - Persistence

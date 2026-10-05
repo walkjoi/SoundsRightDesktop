@@ -843,10 +843,15 @@ final class AppState: ObservableObject {
 
     /// (Re)starts the polling task over the retained boundaries — used directly
     /// when looping replays audio whose timings we already hold.
-    private func startReadAlongTracking() {
+    ///
+    /// `resetHighlight` is false when resuming: the audio picks up mid-word, and
+    /// blanking the emphasis first would flash the text.
+    private func startReadAlongTracking(resetHighlight: Bool = true) {
         readAlongTask?.cancel()
         readAlongTask = nil
-        spokenWordIndex = nil
+        if resetHighlight {
+            spokenWordIndex = nil
+        }
         guard !currentWordBoundaries.isEmpty else { return }
 
         readAlongTask = Task { @MainActor [weak self] in
@@ -856,6 +861,14 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(nanoseconds: 60_000_000)
             }
         }
+    }
+
+    /// Halts highlight updates while keeping the current word emphasized — the
+    /// audio is paused, not finished, so the poll has nothing to do until it
+    /// resumes but the highlight must stay where the audio stopped.
+    private func suspendReadAlongTracking() {
+        readAlongTask?.cancel()
+        readAlongTask = nil
     }
 
     /// Stops highlight updates but keeps the timings for a later loop/replay.
@@ -875,14 +888,20 @@ final class AppState: ObservableObject {
         guard !currentWordBoundaries.isEmpty else { return }
         let time = audioPlayer.currentTime
 
-        // Last word whose start we've passed. Recomputed from scratch each tick
-        // so looped playback (currentTime wrapping to 0) re-tracks naturally.
+        // Last word whose start we've passed, found by bisection over the
+        // (ascending) boundary times. Resolved from the clock rather than
+        // advanced from the previous index, so looped playback — where
+        // currentTime wraps back to 0 — re-tracks naturally.
+        var low = 0
+        var high = currentWordBoundaries.count - 1
         var newIndex: Int?
-        for (index, boundary) in currentWordBoundaries.enumerated() {
-            if time >= boundary.time {
-                newIndex = index
+        while low <= high {
+            let middle = low + (high - low) / 2
+            if currentWordBoundaries[middle].time <= time {
+                newIndex = middle
+                low = middle + 1
             } else {
-                break
+                high = middle - 1
             }
         }
 
@@ -920,6 +939,7 @@ final class AppState: ObservableObject {
             Task { await ttsManager.pauseFallback() }
         } else {
             audioPlayer.pause()
+            suspendReadAlongTracking()
         }
         ttsState = .paused
     }
@@ -930,6 +950,7 @@ final class AppState: ObservableObject {
             Task { await ttsManager.resumeFallback() }
         } else {
             audioPlayer.resume()
+            startReadAlongTracking(resetHighlight: false)
         }
         ttsState = .playing
     }
@@ -1462,13 +1483,9 @@ final class AppState: ObservableObject {
     func toggleSaveCurrentToCollection() {
         guard !currentText.isEmpty else { return }
 
-        if collectionStore.contains(sourceText: currentText) {
-            if let existing = collectionStore.items.first(where: {
-                $0.normalizedKey == CollectionItem.normalizedKey(for: currentText)
-            }) {
-                collectionStore.remove(id: existing.id)
-                logger.info("Removed item from collection")
-            }
+        if let existing = collectionStore.item(forSourceText: currentText) {
+            collectionStore.remove(id: existing.id)
+            logger.info("Removed item from collection")
             return
         }
 

@@ -78,16 +78,35 @@ enum DictationTextCleaner {
         )
     }
 
+    /// Hoisted out of the per-scalar loops below: `CharacterSet`'s named sets
+    /// are computed properties, so reading one inside a loop re-derives it on
+    /// every character.
+    private static let whitespaceScalars = CharacterSet.whitespacesAndNewlines
+    private static let ignoredScalars = CharacterSet.whitespacesAndNewlines
+        .union(.punctuationCharacters)
+
     /// Share of characters that are Han, ignoring whitespace and punctuation.
     /// Used to sanity-check which of two competing hypotheses matches its
     /// claimed language.
     static func hanRatio(_ text: String) -> Double {
-        let meaningful = text.unicodeScalars.filter {
-            !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.punctuationCharacters.contains($0)
+        var meaningfulCount = 0
+        var hanCount = 0
+        for scalar in text.unicodeScalars where !ignoredScalars.contains(scalar) {
+            meaningfulCount += 1
+            if isHan(scalar) { hanCount += 1 }
         }
-        guard !meaningful.isEmpty else { return 0 }
-        let hanCount = meaningful.filter { isHan($0) }.count
-        return Double(hanCount) / Double(meaningful.count)
+        guard meaningfulCount > 0 else { return 0 }
+        return Double(hanCount) / Double(meaningfulCount)
+    }
+
+    /// Non-whitespace scalar count, for the output-rate plausibility check that
+    /// arbitrates between the Chinese and English readings of a clip.
+    static func meaningfulScalarCount(_ text: String) -> Int {
+        var count = 0
+        for scalar in text.unicodeScalars where !whitespaceScalars.contains(scalar) {
+            count += 1
+        }
+        return count
     }
 
     private static func isHan(_ scalar: Unicode.Scalar) -> Bool {

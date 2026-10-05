@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import Foundation
 
@@ -18,23 +19,22 @@ struct DictationAudio: Sendable {
     /// Peak absolute amplitude — used to reject clips that are effectively
     /// silence before they reach Whisper, which otherwise hallucinates a
     /// plausible sentence out of room tone.
+    ///
+    /// Vectorized because it runs between the user releasing the hotkey and the
+    /// engine starting, over as many as 2.9 million samples.
     var peakAmplitude: Float {
+        guard !samples.isEmpty else { return 0 }
         var peak: Float = 0
-        for sample in samples {
-            let magnitude = abs(sample)
-            if magnitude > peak { peak = magnitude }
-        }
+        vDSP_maxmgv(samples, 1, &peak, vDSP_Length(samples.count))
         return peak
     }
 
     /// Root-mean-square level across the whole clip.
     var rootMeanSquare: Float {
         guard !samples.isEmpty else { return 0 }
-        var sumOfSquares: Float = 0
-        for sample in samples {
-            sumOfSquares += sample * sample
-        }
-        return (sumOfSquares / Float(samples.count)).squareRoot()
+        var rms: Float = 0
+        vDSP_rmsqv(samples, 1, &rms, vDSP_Length(samples.count))
+        return rms
     }
 
     /// A buffer the Apple speech engines can consume.
@@ -61,47 +61,66 @@ struct DictationAudio: Sendable {
     }
 
     /// 16-bit PCM WAV bytes. Only ever called for the save-recording shortcut.
+    ///
+    /// Written into one buffer sized up front: the file has millions of samples,
+    /// so appending them to a growing `Data` makes the per-sample overhead the
+    /// dominant cost of saving a recording.
     func wavData() -> Data {
         let channelCount: UInt16 = 1
         let bitsPerSample: UInt16 = 16
-        let byteRate = UInt32(sampleRate) * UInt32(channelCount) * UInt32(bitsPerSample / 8)
+        let bytesPerSample = Int(bitsPerSample / 8)
+        let byteRate = UInt32(sampleRate) * UInt32(channelCount) * UInt32(bytesPerSample)
         let blockAlign = channelCount * (bitsPerSample / 8)
-        let dataByteCount = UInt32(samples.count * Int(bitsPerSample / 8))
+        let dataByteCount = UInt32(samples.count * bytesPerSample)
 
-        var data = Data(capacity: 44 + Int(dataByteCount))
+        let headerByteCount = 44
+        var bytes = [UInt8](repeating: 0, count: headerByteCount + Int(dataByteCount))
 
-        func appendASCII(_ value: String) {
-            data.append(contentsOf: Array(value.utf8))
+        bytes.withUnsafeMutableBytes { raw in
+            var offset = 0
+            func writeASCII(_ value: StaticString) {
+                for index in 0..<value.utf8CodeUnitCount {
+                    raw[offset + index] = value.utf8Start[index]
+                }
+                offset += value.utf8CodeUnitCount
+            }
+            func writeInteger<T: FixedWidthInteger>(_ value: T) {
+                withUnsafeBytes(of: value.littleEndian) { source in
+                    raw.baseAddress?.advanced(by: offset)
+                        .copyMemory(from: source.baseAddress!, byteCount: source.count)
+                }
+                offset += MemoryLayout<T>.size
+            }
+
+            writeASCII("RIFF")
+            writeInteger(36 + dataByteCount)
+            writeASCII("WAVE")
+            writeASCII("fmt ")
+            writeInteger(UInt32(16))        // PCM subchunk size
+            writeInteger(UInt16(1))         // PCM format tag
+            writeInteger(channelCount)
+            writeInteger(UInt32(sampleRate))
+            writeInteger(byteRate)
+            writeInteger(blockAlign)
+            writeInteger(bitsPerSample)
+            writeASCII("data")
+            writeInteger(dataByteCount)
+
+            // Converted one sample at a time rather than through vDSP: the
+            // asymmetric clamp has no vectorized equivalent.
+            let payload = raw.baseAddress!.advanced(by: headerByteCount)
+            samples.withUnsafeBufferPointer { source in
+                for index in 0..<source.count {
+                    let clamped = max(-1, min(1, source[index]))
+                    // Int16 reaches -32768 but only +32767, so scaling
+                    // positives by 32768 would wrap the loudest peak.
+                    let value = Int16(clamped < 0 ? clamped * 32768 : clamped * 32767)
+                    payload.advanced(by: index * bytesPerSample)
+                        .storeBytes(of: value.littleEndian, as: Int16.self)
+                }
+            }
         }
-        func appendUInt32(_ value: UInt32) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        func appendUInt16(_ value: UInt16) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
 
-        appendASCII("RIFF")
-        appendUInt32(36 + dataByteCount)
-        appendASCII("WAVE")
-        appendASCII("fmt ")
-        appendUInt32(16)            // PCM subchunk size
-        appendUInt16(1)             // PCM format tag
-        appendUInt16(channelCount)
-        appendUInt32(UInt32(sampleRate))
-        appendUInt32(byteRate)
-        appendUInt16(blockAlign)
-        appendUInt16(bitsPerSample)
-        appendASCII("data")
-        appendUInt32(dataByteCount)
-
-        for sample in samples {
-            let clamped = max(-1, min(1, sample))
-            // Asymmetric scaling: Int16 reaches -32768 but only +32767, so
-            // scaling positives by 32768 would wrap the loudest peak.
-            let value = Int16(clamped < 0 ? clamped * 32768 : clamped * 32767)
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-
-        return data
+        return Data(bytes)
     }
 }
