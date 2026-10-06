@@ -1,5 +1,6 @@
 import Accelerate
 import AVFoundation
+import CoreAudio
 import Foundation
 import os
 
@@ -23,7 +24,8 @@ final class DictationRecorder {
 
     // MARK: - Services
 
-    private let engine = AVAudioEngine()
+    /// Built fresh by every `start()` and released by `teardown()` — see `start()`.
+    private var engine: AVAudioEngine?
     private let sink = SampleSink()
     private var converter: AVAudioConverter?
     private var meterTask: Task<Void, Never>?
@@ -63,12 +65,25 @@ final class DictationRecorder {
     func start() throws {
         guard !isRecording else { return }
 
+        // Asked of CoreAudio directly: the engine's input format is not a
+        // reliable signal on its own, and a Mac mini or Mac Studio with nothing
+        // plugged in has no input device at all.
+        guard Self.hasDefaultInputDevice else {
+            throw DictationError.noAudioInput
+        }
+
         // Capacity is claimed here, on the main actor, rather than left to grow
         // under the tap: reallocating means a malloc and a copy of everything
         // captured so far, on a real-time thread that must not block.
         sink.reset(reservingSamples: Int(
             AppConstants.dictationSampleRate * AppConstants.dictationCaptureReserveDuration
         ))
+
+        // A fresh engine per recording: an AVAudioEngine's input node binds to
+        // the default input device the first time it is touched and keeps that
+        // binding, so a long-lived engine never sees a microphone connected —
+        // or picked in System Settings → Sound — after it was built.
+        let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
 
@@ -112,6 +127,7 @@ final class DictationRecorder {
             throw DictationError.recordingFailed(error.localizedDescription)
         }
 
+        self.engine = engine
         isRecording = true
         startMetering()
         logger.info("Dictation recording started at \(inputFormat.sampleRate, privacy: .public) Hz input")
@@ -150,9 +166,25 @@ final class DictationRecorder {
         meterTask?.cancel()
         meterTask = nil
         level = 0
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
         converter = nil
+    }
+
+    /// Whether macOS currently has an input device to record from.
+    private static var hasDefaultInputDevice: Bool {
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
+        )
+        return status == noErr && deviceID != kAudioObjectUnknown
     }
 
     private func startMetering() {

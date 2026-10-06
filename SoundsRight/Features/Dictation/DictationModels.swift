@@ -220,7 +220,7 @@ enum DictationError: LocalizedError, Equatable {
         case .speechPermissionDenied:
             return "Speech recognition access needed — enable it in System Settings → Privacy & Security"
         case .noAudioInput:
-            return "No microphone found"
+            return "No microphone found — connect one and try again"
         case .recordingFailed(let reason):
             return "Recording failed — \(reason)"
         case .tooShort:
