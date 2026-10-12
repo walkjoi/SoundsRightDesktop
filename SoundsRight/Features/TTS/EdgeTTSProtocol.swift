@@ -65,7 +65,8 @@ enum EdgeTTSProtocol {
         var components = URLComponents(string: AppConstants.edgeTTSEndpoint)!
 
         components.queryItems = [
-            URLQueryItem(name: "TrustedClientToken", value: trustedClientToken),
+            // Same client token the legacy host took as `TrustedClientToken`.
+            URLQueryItem(name: "Ocp-Apim-Subscription-Key", value: trustedClientToken),
             URLQueryItem(name: "Sec-MS-GEC", value: token),
             URLQueryItem(name: "Sec-MS-GEC-Version", value: secMsGecVersion),
             URLQueryItem(name: "ConnectionId", value: connectionId)

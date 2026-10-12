@@ -141,7 +141,11 @@ enum ActivationSource {
 
 enum AppConstants {
     static let dictionaryAPIBaseURL = "https://api.dictionaryapi.dev/api/v2/entries/en/"
-    static let edgeTTSEndpoint = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
+    /// The host Edge 155+ Read Aloud synthesizes through. The legacy
+    /// `speech.platform.bing.com/.../readaloud/edge/v1` host answers the
+    /// WebSocket upgrade with 403 since October 2026 (rany2/edge-tts#490);
+    /// this one still accepts the v1 `Sec-MS-GEC` token.
+    static let edgeTTSEndpoint = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
     /// Idle timeout between WebSocket frames during Edge TTS synthesis.
     static let edgeTTSIdleTimeout: TimeInterval = 10
     /// Hard ceiling on a whole Edge TTS synthesis, even if the server keeps trickling frames.

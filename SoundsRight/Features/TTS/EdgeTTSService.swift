@@ -109,13 +109,20 @@ actor EdgeTTSService {
             logger.error("Edge TTS synthesis timed out")
             throw EdgeTTSError.synthesisTimedOut
         } catch {
-            let detail: String
+            var detail: String
             if let urlError = error as? URLError {
                 detail = "URLError \(urlError.code.rawValue): \(urlError.localizedDescription)"
             } else {
                 detail = "\(type(of: error)): \(error.localizedDescription)"
             }
-            logger.error("Edge TTS synthesis failed — \(detail)")
+            // A rejected handshake surfaces only as URLError -1011; the status
+            // (403 when the endpoint refuses the token) is on the task's response.
+            if let status = (webSocket.response as? HTTPURLResponse)?.statusCode {
+                detail += " (HTTP \(status))"
+            }
+            // Public: it carries no user text, and redacting it hid which
+            // endpoint failure was sending everything to the fallback voice.
+            logger.error("Edge TTS synthesis failed — \(detail, privacy: .public)")
             throw EdgeTTSError.connectionFailed(detail)
         }
     }

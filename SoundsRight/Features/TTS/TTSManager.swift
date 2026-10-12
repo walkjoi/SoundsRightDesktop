@@ -43,7 +43,7 @@ actor TTSManager {
             logger.info("Edge TTS synthesis succeeded")
             return .audio(audio)
         } catch {
-            logger.warning("Edge TTS synthesis failed: \(error.localizedDescription)")
+            logger.warning("Edge TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
 
             // A superseded or cancelled request must not start fallback speech
             // it can no longer manage.
