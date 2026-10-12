@@ -71,11 +71,13 @@ git pull
 cp -R build.noindex/SoundsRight.app /Applications/
 ```
 
-> After each rebuild the ad-hoc code signature changes, so macOS silently
-> invalidates the Accessibility and Microphone grants — if the hotkeys or
-> dictation stop working, toggle SoundsRight off and on in System Settings →
-> Privacy & Security. "Launch at Login" registrations are tied to the signature
-> the same way and may need re-enabling after a rebuild.
+> macOS ties the Accessibility and Microphone grants (and "Launch at Login") to
+> the app's code signature. `build-app.sh` signs with your Apple Development
+> identity if you have one; otherwise run `./Scripts/setup-signing.sh` once to
+> create a self-signed one, and rebuilds keep their permissions. Without either,
+> builds are ad-hoc signed, the signature changes every time, and macOS silently
+> drops the grants — if the hotkeys or dictation stop working after an update,
+> toggle SoundsRight off and on in System Settings → Privacy & Security.
 
 Builds are native to the Mac that builds them (Apple Silicon or Intel), so
 building on each device — as above — also takes care of CPU architecture.
@@ -123,7 +125,7 @@ Then press **Cmd+R** in Xcode to build and run.
 ## Privacy
 
 **Lookups.** When you press a lookup hotkey, the selected text is sent to Microsoft's
-Edge TTS endpoint (`speech.platform.bing.com`) for speech synthesis, and single words
+Edge TTS endpoint (`api.msedgeservices.com`) for speech synthesis, and single words
 are also sent to the free `api.dictionaryapi.dev` dictionary API. Nothing is sent
 unless you trigger the shortcut. Sentence translation uses Apple's on-device
 Translation framework. The app briefly copies your selection through the clipboard

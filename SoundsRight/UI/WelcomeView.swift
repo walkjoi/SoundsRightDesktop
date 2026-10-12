@@ -174,7 +174,7 @@ struct WelcomeView: View {
 }
 
 /// The app's mark, drawn in SwiftUI so it renders identically in Xcode and
-/// SwiftPM builds (the asset catalog is not compiled under Command Line Tools).
+/// SwiftPM builds (`swift build` does not compile the asset catalog).
 /// Mirrors the app icon: a cinnabar seal with 声 ("sound").
 struct AppMark: View {
     let size: CGFloat

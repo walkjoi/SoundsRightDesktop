@@ -19,24 +19,27 @@ xcodebuild -scheme SoundsRight -configuration Debug build
 ### Without an Apple Developer account (SwiftPM)
 
 ```bash
-./Scripts/build-app.sh   # release only — debug does not compile (see below)
+./Scripts/build-app.sh          # release; pass `debug` for a debug build
+./Scripts/setup-signing.sh      # optional, once: stable signing identity (see below)
 ```
 
-Builds via SwiftPM, assembles `build.noindex/SoundsRight.app` by hand, and ad-hoc signs it (the `.noindex` directory name keeps Spotlight/Launchpad from listing the artifact as a duplicate of the installed app). To avoid mutating the canonical tree, it does not `swift build` the root package directly: it mirrors the sources into `build.noindex/src/` (via `rsync`, `.build` preserved for incremental builds), rewrites them for CLT (see the `@State` note below), copies `Package.swift` with the vendored-package path made absolute, and builds that copy with `--package-path`. Notes:
+Runs `swift build` on the root `Package.swift`, assembles `build.noindex/SoundsRight.app` by hand, and signs it (the `.noindex` directory name keeps Spotlight/Launchpad from listing the artifact as a duplicate of the installed app). Notes:
 
-- `@State` does not compile under CLT on the macOS 27 SDK: the SDK ships it as a `State()` macro (in SwiftUICore) whose `SwiftUIMacros` compiler plugin is bundled only with full Xcode, so `swift build` fails with "external macro implementation type 'SwiftUIMacros.StateMacro' could not be found". A same-name local property wrapper can't win over the macro in attribute resolution. The workaround: `build-app.sh` rewrites every `@State` attribute (and bare `State(...)`/`State<...>` storage inits) to `@CLTState` in the build copy, where `SoundsRight/Utilities/StateMacroShim.swift` defines a `CLTState` property wrapper that forwards to `SwiftUI.State` (gated on `SWIFT_PACKAGE`, so Xcode keeps the real macro and compiles the shim to nothing). If you add a `@State`-adjacent form the rewrite doesn't recognize, extend the `perl` substitution in `build-app.sh`. `@StateObject`/`@Environment`/`@AppStorage`/`@ObservedObject` are unaffected — they remain plain property wrappers.
-- KeyboardShortcuts is vendored at `Vendor/KeyboardShortcuts` with its `#Preview` blocks stripped, because the SwiftUI previews macro plugin ships only with full Xcode. Its upstream `globalKeyboardShortcut(_:)` view modifier is also stripped (unused by the app) — it uses `@State` and hits the same missing-plugin wall. Xcode builds still pull upstream via `project.yml`.
-- Keep `#Preview` blocks in app sources wrapped in `#if DEBUG` so the release CLT build compiles them out. The debug configuration still cannot build under CLT — SwiftPM defines `DEBUG` there, so the previews compile and hit the missing Xcode-only macro plugin. Previews still work in Xcode's canvas.
-- Ad-hoc signatures change on every rebuild, so macOS revokes the Accessibility grant each time. If hotkeys go dead after a rebuild, re-grant in System Settings → Privacy & Security → Accessibility.
+- Full Xcode is required, but it need not be the active developer directory: when `xcode-select` points at the Command Line Tools, the script sets `DEVELOPER_DIR` to `/Applications/Xcode.app` itself. The macOS 27 SDK ships SwiftUI's `@State` as a macro whose `SwiftUIMacros` plugin is bundled only with Xcode, so a CLT-only toolchain cannot compile any SwiftUI view ("external macro implementation type 'SwiftUIMacros.StateMacro' could not be found").
+- KeyboardShortcuts comes from the vendored copy at `Vendor/KeyboardShortcuts` (2.4.0, with its `#Preview` blocks and the unused `globalKeyboardShortcut(_:)` modifier stripped). Xcode builds pull upstream via `project.yml`.
+- Signing: the script uses an `Apple Development` identity if the keychain has one, else the self-signed `SoundsRight Dev` identity that `Scripts/setup-signing.sh` creates, else ad-hoc. macOS pins the Accessibility grant to the signer, so only ad-hoc builds lose it on every rebuild; if hotkeys go dead after one, re-grant in System Settings → Privacy & Security → Accessibility.
+- `swift build` doesn't compile asset catalogs, so the script packs the icon PNGs by hand (see Icons under When Making Changes).
 
 ### Tests
 
-`SoundsRightTests/` is an XCTest target covering the pure logic (transcript cleanup, two-language arbitration, WAV encoding). Running it needs Xcode and, without a signing team, ad-hoc flags:
+`SoundsRightTests/` is an XCTest target covering the pure logic (transcript cleanup, two-language arbitration, WAV encoding, the audio cache's disk container). Running it needs Xcode and, without a signing team, ad-hoc flags:
 
 ```bash
 xcodebuild -scheme SoundsRight -destination 'platform=macOS' \
   CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO test
 ```
+
+`xcodebuild` (here and above) fails with "requires Xcode" while `xcode-select` points at the Command Line Tools; prefix it with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` instead of switching the system-wide setting.
 
 It is not part of the SwiftPM package. Place new tests in `SoundsRightTests/`.
 
@@ -44,7 +47,7 @@ It is not part of the SwiftPM package. Place new tests in `SoundsRightTests/`.
 
 Single-target app with a `@main` SwiftUI entry point (`SoundsRightApp`) that lives entirely in the menu bar (`MenuBarExtra`). Core state is centralized in `AppState` (an `@MainActor ObservableObject`).
 
-Key data flow: on hotkey press, `SelectionReader` captures the current selection by synthesizing ⌘C and reading the pasteboard (requires Accessibility permission; input is truncated to `maxInputLength` with a `wasTruncated` flag surfaced in the UI; the user's previous clipboard contents are restored afterwards, and the ⌘C keycode is resolved against the active keyboard layout). Failed activations always produce visible feedback (a cursor-anchored toast via `AppState.showToast`, or the Accessibility alert). Successful lookups are also recorded in `RecentLookupStore` (in-memory, surfaced in the menu bar dropdown). Then:
+Key data flow: on hotkey press, `SelectionReader` captures the current selection by synthesizing ⌘C and reading the pasteboard (requires Accessibility permission; input is truncated to `maxInputLength` with a `wasTruncated` flag surfaced in the UI; the user's previous clipboard contents are restored afterwards, and the ⌘C keycode is resolved against the active keyboard layout). Failed activations always produce visible feedback (a cursor-anchored toast via `AppState.showToast`, or the Accessibility alert). Successful lookups are also recorded in `RecentLookupStore` (JSON-persisted, surfaced in the menu bar dropdown). Then:
 
 - **Single word** -> dictionary lookup via `api.dictionaryapi.dev`, raced against a plain Apple Translation of the word so unknown words aren't stuck behind a failed lookup (the richer dictionary result supersedes the translation in the UI when it lands); on macOS 15+ the definitions are then translated to Chinese in one batched `translations(from:)` call (English-only result on older macOS)
 - **Multiple words** -> Apple Translation, en -> zh-Hans (macOS 15+ only)
@@ -57,7 +60,7 @@ Either path feeds TTS synthesis -> audio playback. Results can be saved to Colle
 
 `TTSManager` (an actor) tries providers in order:
 1. **AudioCache** -- two-tier LRU: in-memory (`audioCacheMaxEntries`) backed by `.srtts` files in `~/Library/Application Support/SoundsRight/AudioCache/` (SHA-256 of text|voice|rate, `audioCacheDiskMaxBytes` cap, oldest-modification-first eviction). Cached entries carry word-boundary timings, so replays still drive read-along highlighting. The disk format is a small binary container (`SynthesizedAudio.encodedForDisk`), deliberately *not* `Codable` — JSON base64s the MP3 payload, inflating the file by a third and putting a transform over every byte on the path whose purpose is to return instantly. The running byte total is tracked in-actor so a write only enumerates the directory when the size cap is actually at risk, and an unreadable entry (such as one left by an older format) counts as a miss and is swept
-2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English; the voice is user-selectable in Settings → Playback between `avaNeural` and `emmaMultilingualNeural`, stored in `@AppStorage("ttsVoice")`). Returns `SynthesizedAudio` (audio bytes + `WordBoundary` timings parsed from `Path:audio.metadata` messages, which power read-along highlighting in the panel). Unofficial endpoint; requires network and a reasonably accurate system clock (auth token is time-derived). Bounded by a 10s idle timeout and a 30s overall synthesis deadline
+2. **EdgeTTSService** -- Microsoft Edge TTS over WebSocket (American English; the voice is user-selectable in Settings → Playback between `avaNeural` and `emmaMultilingualNeural`, stored in `@AppStorage("ttsVoice")`). Returns `SynthesizedAudio` (audio bytes + `WordBoundary` timings parsed from `Path:audio.metadata` messages, which power read-along highlighting in the panel). Unofficial endpoint: `api.msedgeservices.com`, the host Edge 155+ Read Aloud uses, with the client token sent as `Ocp-Apim-Subscription-Key`. The legacy `speech.platform.bing.com` readaloud host refuses every WebSocket upgrade with 403 since October 2026, which silently sent all speech to the fallback voice. Requires network and a reasonably accurate system clock (the `Sec-MS-GEC` token is time-derived). A failed synthesis logs its HTTP status unredacted under the `EdgeTTSService` category. Bounded by a 10s idle timeout and a 30s overall synthesis deadline
 3. **FallbackTTSService** -- macOS `AVSpeechSynthesizer` with `en-US` voice (no audio data returned, plays directly). `.fallbackUsed(generation)` means speech *started*; completion arrives via the handler registered with `TTSManager.setFallbackFinishedHandler`, tagged with the utterance generation so stale events are ignored. Pause/resume/stop are supported through `TTSManager`; loop and replay are not (no audio data)
 
 `TTSResult.failed` is returned when Edge fails and fallback speech cannot start; callers must handle all three cases.
@@ -110,13 +113,15 @@ SoundsRight/
                     SoundOnlyHUD, DictationHUD, ToastView, WelcomeView,
                     CollectionWindowView, ReviewSessionView,
                     DictionaryDetailView)
-  Utilities/     -- Constants, AudioCache, SelectionReader, TextInserter,
-                    KeyboardLayout, CaretLocator
+  Utilities/     -- Constants, AudioCache, LRUCache, SelectionReader,
+                    TextInserter, KeyboardLayout, CaretLocator
   Resources/     -- Assets.xcassets (app + menu bar icons); Info.plist and
                     SoundsRight.entitlements live at SoundsRight/ root
-SoundsRightTests/ -- XCTest: smoke test plus dictation logic tests
+SoundsRightTests/ -- XCTest: smoke test, dictation logic, audio cache disk format
 Scripts/         -- build-app.sh (SwiftPM app-bundle build, no developer
-                    account); generate-icons.swift (renders icon PNGs from code)
+                    account); setup-signing.sh (one-time self-signed identity
+                    so rebuilds keep the Accessibility grant);
+                    generate-icons.swift (renders icon PNGs from code)
 Vendor/          -- vendored KeyboardShortcuts (see Build & Run)
 docs/            -- design specs
 ```
@@ -135,7 +140,7 @@ docs/            -- design specs
 
 Strict concurrency is enabled (`SWIFT_STRICT_CONCURRENCY: complete`). All new code must compile without concurrency warnings. `AppState` and `DictationController` are `@MainActor`; `TTSManager`, `EdgeTTSService`, `DictationManager`, `WhisperKitTranscriber` and `AppleSpeechTranscriber` are `actor` types. `FallbackTTSService` and `AudioPlayer` are `@MainActor` NSObject subclasses (they must conform to AVFoundation delegate protocols, which actors cannot); their `nonisolated` delegate callbacks hop back onto the main actor before touching state.
 
-Two patterns worth knowing before touching dictation:
+Patterns worth knowing before touching dictation:
 
 - The `AVAudioEngine` tap runs on a real-time audio thread that must never await, so `DictationRecorder` writes into a lock-guarded `SampleSink: @unchecked Sendable` rather than an actor. That `@unchecked` is deliberate, not an escape hatch.
 - `WhisperKit` is a non-Sendable class. It is stored inside `WhisperKitTranscriber` and never crosses out: the shared load task is `Task<Void, Never>` and hands the pipeline over through the actor's own `pipe` property. `@preconcurrency import WhisperKit` covers the rest.
@@ -154,5 +159,5 @@ Two patterns worth knowing before touching dictation:
 - This app is always running in the menu bar, so recurring work has to stop when it has nothing to do. Read-along tracking polls at 16 Hz only while audio is actually advancing — `pauseTTS` suspends the task and `resumeTTS` restarts it without clearing the highlight. `AudioPlayer` is deliberately not an `ObservableObject` for the same reason: anything it published would need a timer to feed it. Progress-style callbacks that fire per chunk (the Whisper model download) are throttled to the granularity the UI actually renders before reaching the main actor.
 - If modifying dictation, preserve three invariants: audio never touches disk unless the save shortcut fired; silent and too-short clips are rejected before any engine runs (Whisper hallucinates on room tone); and language detection stays clamped to Mandarin/English rather than trusting an engine's open-set guess.
 - New UI views go in `UI/`; new feature domains get their own subdirectory under `Features/`.
-- `project.yml` resolves KeyboardShortcuts as `from: "2.0.0"` (floating), so Xcode may pick up a newer 2.x than the vendored 2.4.0 on its own. Either pin an exact version in `project.yml`, or re-vendor `Vendor/KeyboardShortcuts` (and re-strip its `#Preview` blocks) whenever the resolved version changes.
-- Icons are code-generated: edit `Scripts/generate-icons.swift` and run `swift Scripts/generate-icons.swift` from the repo root, then commit the regenerated PNGs. Xcode builds compile them from `Assets.xcassets` (`ASSETCATALOG_COMPILER_APPICON_NAME`). `build-app.sh` cannot run `actool`, so it packs the same PNGs by hand: App Icon → `.icns` via `iconutil`, menu bar → `MenuBarIcon{,@2x}.png` in `Contents/Resources`. The status-item label loads that image via `NSImage(named:)` + `Image(nsImage:)` (with `isTemplate` and an 18pt size), not SwiftUI's `Image("MenuBarIcon")` — the string form only resolves asset-catalog names, so using it after a successful `NSImage` check left a blank menu bar icon on the SwiftPM path. The SF Symbol fallback only fires if both paths omit the icon.
+- `project.yml` resolves KeyboardShortcuts as `from: "2.0.0"` (floating), so Xcode may pick up a newer 2.x than the vendored 2.4.0 on its own. Either pin an exact version in `project.yml`, or re-vendor `Vendor/KeyboardShortcuts` whenever the resolved version changes.
+- Icons are code-generated: edit `Scripts/generate-icons.swift` and run `swift Scripts/generate-icons.swift` from the repo root, then commit the regenerated PNGs. Xcode builds compile them from `Assets.xcassets` (`ASSETCATALOG_COMPILER_APPICON_NAME`). `swift build` does not compile asset catalogs, so `build-app.sh` packs the same PNGs by hand: App Icon → `.icns` via `iconutil`, menu bar → `MenuBarIcon{,@2x}.png` in `Contents/Resources`. The status-item label loads that image via `NSImage(named:)` + `Image(nsImage:)` (with `isTemplate` and an 18pt size), not SwiftUI's `Image("MenuBarIcon")` — the string form only resolves asset-catalog names, so using it after a successful `NSImage` check left a blank menu bar icon on the SwiftPM path. The SF Symbol fallback only fires if both paths omit the icon.

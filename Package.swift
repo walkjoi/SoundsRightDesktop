@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
-// SwiftPM manifest used by Scripts/build-app.sh to build the app with only
-// Command Line Tools (no full Xcode). The canonical Xcode setup remains
-// project.yml + XcodeGen.
+// SwiftPM manifest used by Scripts/build-app.sh to build the app without an
+// Apple Developer account (it still needs Xcode's toolchain for SwiftUI's
+// macro plugins). The canonical Xcode setup remains project.yml + XcodeGen.
 import PackageDescription
 
 let package = Package(
@@ -14,12 +14,11 @@ let package = Package(
     ],
     dependencies: [
         // Vendored copy of KeyboardShortcuts 2.4.0 with its #Preview blocks
-        // stripped: the SwiftUI previews macro plugin ships only with full
-        // Xcode, so the upstream package cannot compile under Command Line
-        // Tools alone. Xcode builds (project.yml) still use upstream.
+        // and unused globalKeyboardShortcut(_:) modifier stripped. Xcode
+        // builds (project.yml) use upstream.
         .package(path: "Vendor/KeyboardShortcuts"),
-        // Pure-Swift Core ML runtime for Whisper — no C++ toolchain, so the
-        // Command Line Tools build path keeps working.
+        // Pure-Swift Core ML runtime for Whisper — no C++ toolchain, CMake or
+        // Metal compiler, so it builds with plain `swift build`.
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0")
     ],
     targets: [

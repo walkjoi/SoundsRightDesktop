@@ -55,7 +55,7 @@ for bundle in "$ROOT/.build/$CONFIG"/*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 
-# Icons: SwiftPM can't compile the asset catalog (actool ships with Xcode), so
+# Icons: `swift build` doesn't compile asset catalogs (that's Xcode's actool step), so
 # the script packs what Xcode would have produced from Assets.xcassets.
 # Xcode builds still get both icons from the catalog via
 # ASSETCATALOG_COMPILER_APPICON_NAME / Image("MenuBarIcon").

@@ -11,7 +11,7 @@ Review changes for:
 
 1. **Concurrency safety**: `@MainActor` annotations on UI-touching code, `actor` isolation for service types, no unprotected mutable shared state, proper `@Sendable` closures.
 2. **Error handling**: domain-specific error enums with `LocalizedError` conformance, exhaustive `switch` over error cases, no silent failures.
-3. **Architecture fit**: state changes flow through `AppState`, TTS synthesis goes through `TTSManager` (not individual services), new files are in the correct directory (`UI/`, `Features/`, `Utilities/`).
+3. **Architecture fit**: state changes flow through `AppState` (dictation through `DictationController`, deliberately kept outside it), TTS synthesis goes through `TTSManager` and transcription through `DictationManager` (not individual services), new files are in the correct directory (`UI/`, `Features/`, `Utilities/`).
 4. **Logging**: uses `os.Logger` with subsystem `"com.soundsright.desktop"` and an appropriate category.
 5. **Style**: `// MARK: -` sections, `guard let` for early exits, constants in `AppConstants`.
 
