@@ -33,14 +33,18 @@ final class AppState: ObservableObject {
     /// True while the Chinese translation of dictionary definitions is in flight — word + phonetics are already visible.
     @Published var isTranslatingDefinitions: Bool = false
 
-    @Published var ttsState: TTSPlaybackState = .idle
+    @Published var ttsState: TTSPlaybackState = .idle {
+        didSet { updateSpeechEscapeClaim() }
+    }
 
     /// True while the loaded audio is actually looping. Distinct from the
     /// persistent `repeatEnabled` preference the toggle buttons show: fallback
     /// speech can't loop, and turning repeat off lets the current pass finish.
     @Published private(set) var isLooping: Bool = false
 
-    @Published var isPanelVisible: Bool = false
+    @Published var isPanelVisible: Bool = false {
+        didSet { updateSpeechEscapeClaim() }
+    }
 
     /// True while the panel is pinned: it survives clicks outside and keeps
     /// its position across activations instead of re-anchoring at the cursor.
@@ -261,7 +265,7 @@ final class AppState: ObservableObject {
             self?.showToast(message, style: style)
         }
         dictationController.setCancelShortcutEnabled = { [weak self] enabled in
-            self?.shortcutManager.setDictationCancelEnabled(enabled)
+            self?.shortcutManager.setEscapeClaimed(enabled, by: .dictation)
         }
         dictationController.requestAccessibilityGrant = { [weak self] in
             self?.presentAccessibilityAlert()
@@ -293,6 +297,11 @@ final class AppState: ObservableObject {
                 onDictationCancel: { [weak self] in
                     MainActor.assumeIsolated {
                         self?.dictationController.cancel()
+                    }
+                },
+                onStopSpeech: { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.stopSpeakingAndClose()
                     }
                 }
             )
@@ -442,6 +451,7 @@ final class AppState: ObservableObject {
         audioPlayer.reset()
         stopReadAlong()
         await stopFallbackPlayback()
+        ttsState = .idle
         if !(isPanelPinned && mode == .translation) {
             hidePanel()
         }
@@ -1214,6 +1224,30 @@ final class AppState: ObservableObject {
         hidePanel()
     }
 
+    // MARK: - Esc While Speaking
+
+    /// Holds the global Esc only while lookup speech is loading or playing in
+    /// a visible panel or HUD. Gated on the surface as well as the state so a
+    /// stale `ttsState` can never leave Esc swallowed in every other app.
+    private func updateSpeechEscapeClaim() {
+        let isSurfaceVisible = isPanelVisible || soundOnlyPanel?.isVisible == true
+        shortcutManager.setEscapeClaimed(
+            ttsState.isPlayingOrLoading && isSurfaceVisible,
+            by: .speech
+        )
+    }
+
+    /// Esc while speaking: silence it and close whichever surface is showing —
+    /// the panel even when pinned, as Esc inside the panel already does.
+    private func stopSpeakingAndClose() {
+        logger.info("Esc pressed while speaking — stopping and closing")
+        stopTTS()
+        hidePanel()
+        hideSoundOnlyTask?.cancel()
+        hideSoundOnlyTask = nil
+        soundOnlyPanel?.orderOut(nil)
+    }
+
     // MARK: - Panel Pinning & Transience
 
     func togglePanelPin() {
@@ -1405,6 +1439,7 @@ final class AppState: ObservableObject {
             }
             panel.setFrameOrigin(origin)
             panel.orderFront(nil)
+            self.updateSpeechEscapeClaim()
         }
     }
 

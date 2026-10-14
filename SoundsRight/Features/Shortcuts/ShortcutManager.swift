@@ -20,10 +20,11 @@ extension KeyboardShortcuts.Name {
         "dictationSaveRecording",
         default: .init(.backtick, modifiers: [.control, .shift])
     )
-    /// Discards the in-flight dictation. Registered globally but only *enabled*
-    /// while recording, so Esc keeps its normal meaning the rest of the time.
-    static let dictationCancel = Self(
-        "dictationCancel",
+    /// Esc: discards an in-flight dictation, or stops speech and closes its
+    /// window. Registered globally but only *enabled* while something claims
+    /// it, so Esc keeps its normal meaning the rest of the time.
+    static let cancel = Self(
+        "cancel",
         default: .init(.escape)
     )
 }
@@ -37,11 +38,22 @@ final class ShortcutManager: ObservableObject {
         let onDictationKeyDown: (_ saveRecording: Bool) -> Void
         let onDictationKeyUp: () -> Void
         let onDictationCancel: () -> Void
+        let onStopSpeech: () -> Void
+    }
+
+    /// The flows that can hold Esc. KeyboardShortcuts registers hotkeys per key
+    /// combination rather than per name, so two names bound to Esc would fire
+    /// together and disabling one would unregister both — hence one name, and
+    /// the owners tracked here.
+    enum EscapeClaim {
+        case dictation
+        case speech
     }
 
     @Published var isRegistered: Bool = false
 
     private var handlers: Handlers?
+    private var escapeClaims: Set<EscapeClaim> = []
 
     func register(_ handlers: Handlers) {
         self.handlers = handlers
@@ -68,21 +80,40 @@ final class ShortcutManager: ObservableObject {
             self?.handlers?.onDictationKeyUp()
         }
 
-        KeyboardShortcuts.onKeyDown(for: .dictationCancel) { [weak self] in
-            self?.handlers?.onDictationCancel()
+        KeyboardShortcuts.onKeyDown(for: .cancel) { [weak self] in
+            self?.handleEscape()
         }
-        // Esc must not be swallowed except while a dictation is in flight.
-        KeyboardShortcuts.disable(.dictationCancel)
+        // Esc must not be swallowed except while a claim is held.
+        KeyboardShortcuts.disable(.cancel)
 
         isRegistered = true
     }
 
-    /// Claims Esc for the duration of a recording, and hands it back after.
-    func setDictationCancelEnabled(_ enabled: Bool) {
-        if enabled {
-            KeyboardShortcuts.enable(.dictationCancel)
+    /// Claims Esc for `owner` while `claimed`, and hands it back to the system
+    /// once no owner holds it.
+    func setEscapeClaimed(_ claimed: Bool, by owner: EscapeClaim) {
+        let wasClaimed = !escapeClaims.isEmpty
+        if claimed {
+            escapeClaims.insert(owner)
         } else {
-            KeyboardShortcuts.disable(.dictationCancel)
+            escapeClaims.remove(owner)
+        }
+
+        let isClaimed = !escapeClaims.isEmpty
+        guard isClaimed != wasClaimed else { return }
+        if isClaimed {
+            KeyboardShortcuts.enable(.cancel)
+        } else {
+            KeyboardShortcuts.disable(.cancel)
+        }
+    }
+
+    /// One press ends one thing; when both are live, the dictation goes first.
+    private func handleEscape() {
+        if escapeClaims.contains(.dictation) {
+            handlers?.onDictationCancel()
+        } else if escapeClaims.contains(.speech) {
+            handlers?.onStopSpeech()
         }
     }
 
@@ -92,8 +123,9 @@ final class ShortcutManager: ObservableObject {
             .soundOnlyClipboard,
             .dictation,
             .dictationSaveRecording,
-            .dictationCancel
+            .cancel
         )
+        escapeClaims.removeAll()
         handlers = nil
         isRegistered = false
     }

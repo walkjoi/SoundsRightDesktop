@@ -17,6 +17,8 @@ Or press the dictation shortcut and speak — in Mandarin, English, or both in t
 - **Dictation** (default: `` ⌃` ``) — speak, and the transcript is pasted at your cursor
 - **Dictation + save recording** (default: `` ⌃⇧` ``) — the same, but the audio is also written to disk
 
+While either mode is speaking, `Esc` stops it and closes the panel or HUD.
+
 All shortcuts are rebindable in Settings.
 
 ## Dictation
