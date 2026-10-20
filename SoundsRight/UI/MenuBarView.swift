@@ -61,6 +61,24 @@ struct MenuBarView: View {
                 }
             }
 
+            if !dictationController.recentTranscripts.isEmpty {
+                MenuDivider()
+                MenuSectionLabel(title: "Recent Dictations")
+
+                // Copy rather than paste: the user may be recovering a paste that
+                // missed, and should choose where it goes this time.
+                ForEach(dictationController.recentTranscripts) { entry in
+                    MenuRow(
+                        icon: "doc.on.doc",
+                        label: entry.text,
+                        detail: entry.createdAt.formatted(date: .omitted, time: .shortened)
+                    ) {
+                        dismiss()
+                        dictationController.copyRecentTranscript(entry)
+                    }
+                }
+            }
+
             MenuDivider()
 
             MenuRow(

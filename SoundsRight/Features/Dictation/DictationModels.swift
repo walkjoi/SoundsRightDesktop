@@ -164,6 +164,13 @@ enum DictationPhase: Equatable {
     }
 }
 
+/// A delivered transcript, kept in memory for menu bar → Recent Dictations.
+struct RecentDictation: Identifiable, Equatable, Sendable {
+    let id = UUID()
+    let text: String
+    let createdAt: Date
+}
+
 /// A finished transcription, before it is inserted at the caret.
 struct DictationTranscript: Sendable {
     let text: String

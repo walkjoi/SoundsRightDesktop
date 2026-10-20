@@ -218,4 +218,7 @@ enum AppConstants {
     /// previous clipboard is restored. Electron and browser targets service a
     /// synthesized ⌘V well after the event is posted.
     static let dictationClipboardRestoreDelay: TimeInterval = 1.5
+    /// Transcripts kept in memory (menu bar → Recent Dictations), so a paste
+    /// that landed nowhere can still be recovered.
+    static let recentDictationsMaxEntries = 3
 }

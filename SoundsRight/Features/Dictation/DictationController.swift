@@ -20,6 +20,9 @@ final class DictationController: ObservableObject {
     @Published private(set) var modelStatus: WhisperModelStatus = .notDownloaded
     /// True when this dictation will also be written to disk (⌃⇧`).
     @Published private(set) var isSavingRecording = false
+    /// Newest first. Memory only: a transcript is as private as the audio it
+    /// came from, and that never touches disk unless the save shortcut fired.
+    @Published private(set) var recentTranscripts: [RecentDictation] = []
 
     // MARK: - App Storage
 
@@ -171,7 +174,17 @@ final class DictationController: ObservableObject {
     // MARK: - Core Actions
 
     private func start(saveRecording: Bool) {
-        guard phase != .recording else { return }
+        switch phase {
+        case .recording:
+            return
+        case .transcribing:
+            // Starting over would bump `activationID`, and the transcription
+            // still in flight would then drop its text without a trace.
+            showToast?("Still transcribing — one moment", .info)
+            return
+        case .idle, .failed:
+            break
+        }
 
         activationID += 1
         let activation = activationID
@@ -264,6 +277,8 @@ final class DictationController: ObservableObject {
         \(String(format: "%.2f", transcript.processingDuration), privacy: .public)s
         """)
 
+        remember(transcript.text)
+
         // The HUD is dismissed first: it is a non-activating panel, but the
         // synthesized ⌘V should land with nothing of ours on screen.
         finishSession()
@@ -305,6 +320,26 @@ final class DictationController: ObservableObject {
         isSavingRecording = false
         setCancelShortcutEnabled?(false)
         hidePanel()
+    }
+
+    // MARK: - Recent Transcripts
+
+    /// The user's clipboard is restored after every paste, and nothing tells us
+    /// whether the ⌘V actually landed (focus outside a text field, an app too
+    /// slow to read the pasteboard). Without this list a missed paste loses the
+    /// text for good.
+    private func remember(_ text: String) {
+        let entry = RecentDictation(text: text, createdAt: Date())
+        let others = recentTranscripts.filter { $0.text != text }
+        recentTranscripts = Array(([entry] + others).prefix(AppConstants.recentDictationsMaxEntries))
+    }
+
+    /// Menu bar → Recent Dictations.
+    func copyRecentTranscript(_ entry: RecentDictation) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(entry.text, forType: .string)
+        showToast?("Copied — press ⌘V to paste", .info)
     }
 
     // MARK: - Settings
