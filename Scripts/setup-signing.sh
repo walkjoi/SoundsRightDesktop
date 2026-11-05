@@ -39,9 +39,13 @@ fi
 openssl pkcs12 -export $PKCS12_LEGACY -out "$TMP/identity.p12" \
     -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout pass:soundsright
 
-# -T pre-authorizes codesign so signing doesn't prompt on every build.
+# -T pre-authorizes codesign so signing doesn't prompt on every build. Only
+# codesign: /usr/bin/security is left off so the private key can't be
+# exported without a keychain prompt. This does not stop local misuse — any
+# process running as the user can still invoke codesign with this identity,
+# and the Accessibility grant is pinned to it.
 security import "$TMP/identity.p12" -k "$KEYCHAIN" -P soundsright \
-    -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+    -T /usr/bin/codesign >/dev/null
 
 # Mark the certificate trusted for code signing (user trust domain).
 # This is the step that may show a password prompt.
