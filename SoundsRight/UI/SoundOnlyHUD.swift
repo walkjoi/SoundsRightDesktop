@@ -6,13 +6,13 @@ struct SoundOnlyHUD: View {
     var body: some View {
         HStack(spacing: 10) {
 
-            // Play / Pause / Loading / Error
+            // Play / Pause / Loading / Error, for the lookup only, as in the panel
             Group {
-                if case .loading = appState.ttsState {
+                if case .loading = appState.lookupPlayback {
                     ProgressView()
                         .controlSize(.small)
                         .frame(width: 26, height: 26)
-                } else if case .error(let message) = appState.ttsState {
+                } else if case .error(let message, _) = appState.lookupPlayback {
                     Button(action: { appState.togglePlayPause() }) {
                         Image(systemName: "exclamationmark.circle")
                             .font(.system(size: 14, weight: .light))
@@ -46,7 +46,7 @@ struct SoundOnlyHUD: View {
                     )
             }
             .buttonStyle(.plain)
-            .disabled(!appState.hasAudioData)
+            .disabled(!appState.hasLookupAudio)
             .help(appState.repeatEnabled ? "Turn off repeat" : "Repeat")
 
             // Speed pill
@@ -99,7 +99,7 @@ struct SoundOnlyHUD: View {
     }
 
     private var isPlaying: Bool {
-        if case .playing = appState.ttsState { return true }
+        if case .playing = appState.lookupPlayback { return true }
         return false
     }
 }

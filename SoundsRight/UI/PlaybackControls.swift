@@ -12,12 +12,13 @@ struct PlaybackControls: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
 
-            // Play / Pause
-            if case .loading = appState.ttsState {
+            // Play / Pause, for the lookup only: a Collection row or the voice
+            // preview playing meanwhile shows as idle here.
+            if case .loading = appState.lookupPlayback {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 22, height: 22)
-            } else if case .error(let message) = appState.ttsState {
+            } else if case .error(let message, _) = appState.lookupPlayback {
                 Button(action: playAction) {
                     Image(systemName: "exclamationmark.circle")
                         .font(.system(size: 16, weight: .light))
@@ -119,13 +120,13 @@ struct PlaybackControls: View {
     }
 
     private var isPlaying: Bool {
-        if case .playing = appState.ttsState { return true }
+        if case .playing = appState.lookupPlayback { return true }
         return false
     }
 
     private var isLoopDisabled: Bool {
-        if case .loading = appState.ttsState { return true }
-        return !appState.hasAudioData
+        if case .loading = appState.lookupPlayback { return true }
+        return !appState.hasLookupAudio
     }
 
     private func playAction() {

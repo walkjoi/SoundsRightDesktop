@@ -174,9 +174,9 @@ private struct CollectionDetailPane: View {
     @ViewBuilder
     private var playRow: some View {
         HStack(spacing: 10) {
-            if case .loading = appState.ttsState {
+            if case .loading = playback {
                 ProgressView().controlSize(.small).frame(width: 22, height: 22)
-            } else if case .error(let message) = appState.ttsState {
+            } else if case .error(let message, _) = playback {
                 Button(action: play) {
                     Image(systemName: "exclamationmark.circle")
                         .font(.system(size: 16, weight: .light))
@@ -240,19 +240,29 @@ private struct CollectionDetailPane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The player as this row renders it: its own item's playback, or idle
+    /// while anything else (a lookup, another row) is playing.
+    private var playback: TTSPlaybackState {
+        appState.ttsState.filtered(to: .oneShot(item.sourceText))
+    }
+
     private var isPlaying: Bool {
-        if case .playing = appState.ttsState { return true }
+        if case .playing = playback { return true }
         return false
     }
 
+    /// Pauses or resumes this item's own playback; anything else playing is
+    /// replaced by this item rather than paused from here.
     private func play() {
-        switch appState.ttsState {
+        switch playback {
         case .playing:
             appState.pauseTTS()
         case .paused:
             appState.resumeTTS()
-        default:
+        case .idle, .finished, .error:
             appState.playCollectionItem(text: item.sourceText)
+        case .loading:
+            break
         }
     }
 }
