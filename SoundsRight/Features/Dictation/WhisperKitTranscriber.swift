@@ -14,7 +14,7 @@ import os
 /// Two adaptations exploit the fact that only two languages are ever possible:
 /// detection is clamped to `{zh, en}` (see `resolveLanguage`), and the decoder is
 /// primed with a language-appropriate prompt so Mandarin comes out Simplified.
-actor WhisperKitTranscriber: DictationTranscribing {
+actor WhisperKitTranscriber: WhisperTranscribing {
 
     nonisolated let engine: DictationEngine = .whisper
 

@@ -49,6 +49,9 @@ actor EdgeTTSService {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
+        // A request superseded before it connects never opens a socket.
+        try Task.checkCancellation()
+
         let webSocket = session.webSocketTask(with: request)
         webSocket.resume()
 
@@ -69,6 +72,11 @@ actor EdgeTTSService {
             var receivingAudio = true
 
             while receivingAudio {
+                // Checked between messages, which stream steadily during a
+                // synthesis: a superseded request stops at the next one and
+                // the deferred cancel closes its socket, instead of running
+                // to the end only to be discarded.
+                try Task.checkCancellation()
                 let message = try await webSocket.receive()
 
                 switch message {
@@ -104,6 +112,9 @@ actor EdgeTTSService {
             logger.info("Edge TTS synthesis succeeded: \(audioBuffer.count) bytes, \(wordBoundaries.count) word boundaries")
             return SynthesizedAudio(data: audioBuffer, wordBoundaries: wordBoundaries)
         } catch let error as EdgeTTSError {
+            throw error
+        } catch let error as CancellationError {
+            // Not a connection failure: the caller no longer wants the audio.
             throw error
         } catch let error as URLError where error.code == .timedOut {
             logger.error("Edge TTS synthesis timed out")

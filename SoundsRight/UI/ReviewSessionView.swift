@@ -107,7 +107,7 @@ struct ReviewSessionView: View {
 
     @ViewBuilder
     private func playButton(for item: CollectionItem) -> some View {
-        if case .loading = appState.ttsState {
+        if case .loading = appState.ttsState.filtered(to: .oneShot(item.sourceText)) {
             ProgressView()
                 .controlSize(.small)
                 .frame(width: 30, height: 30)

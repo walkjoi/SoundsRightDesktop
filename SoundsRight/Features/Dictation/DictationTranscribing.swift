@@ -19,6 +19,18 @@ protocol DictationTranscribing: Sendable {
     func shutdown() async
 }
 
+/// The Whisper engine as `DictationManager` drives it: a model that is
+/// downloaded and loaded before first use, whose progress the UI shows and
+/// whose build the user can switch. A protocol so the manager's routing and
+/// warmup can be tested with a stub instead of a 632 MB model.
+protocol WhisperTranscribing: DictationTranscribing {
+    var modelStatus: WhisperModelStatus { get async }
+
+    func setStatusHandler(_ handler: @escaping @MainActor @Sendable (WhisperModelStatus) -> Void) async
+
+    func setVariant(_ variant: WhisperModelVariant) async
+}
+
 // MARK: - Transcript Cleanup
 
 /// Normalization shared by every backend. Kept separate from the backends so

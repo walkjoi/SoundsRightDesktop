@@ -88,6 +88,9 @@ struct GeneralSettingsTab: View {
 
     private static let logger = Logger(subsystem: "com.soundsright.desktop", category: "SettingsView")
 
+    private static let approvalNeededMessage =
+        "Approval needed: enable SoundsRight in System Settings → General → Login Items."
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsSection(title: "Keyboard Shortcuts") {
@@ -169,8 +172,27 @@ struct GeneralSettingsTab: View {
         .padding(.top, 8)
         // The settings window's hosting view is cached across opens, so .onAppear fires
         // only once; re-sync with the system state whenever the window becomes key.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            // Only this window coming back can follow a change made in System
+            // Settings. The translation panel becomes key on every lookup, and
+            // the status read is an IPC call.
+            guard (notification.object as? NSWindow)?.contentView is NSHostingView<SettingsView> else { return }
+            syncLaunchAtLogin()
+        }
+    }
+
+    /// Re-reads the login item's status, which changes behind the app's back
+    /// in System Settings. Approving it there resolves the approval note, so
+    /// the note is cleared with the toggle rather than outliving it; an error
+    /// from a failed call stays while the toggle is still off, since nothing
+    /// newer explains why.
+    private func syncLaunchAtLogin() {
+        let status = SMAppService.mainApp.status
+        launchAtLogin = status == .enabled
+        let approvalResolved = launchAtLoginMessage == Self.approvalNeededMessage
+            && status != .requiresApproval
+        if status == .enabled || approvalResolved {
+            launchAtLoginMessage = nil
         }
     }
 
@@ -193,7 +215,7 @@ struct GeneralSettingsTab: View {
         }
 
         if SMAppService.mainApp.status == .requiresApproval {
-            launchAtLoginMessage = "Approval needed: enable SoundsRight in System Settings → General → Login Items."
+            launchAtLoginMessage = Self.approvalNeededMessage
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }

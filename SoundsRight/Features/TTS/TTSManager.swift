@@ -43,13 +43,14 @@ actor TTSManager {
             logger.info("Edge TTS synthesis succeeded")
             return .audio(audio)
         } catch {
-            logger.warning("Edge TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
-
             // A superseded or cancelled request must not start fallback speech
-            // it can no longer manage.
+            // it can no longer manage. Nor is it worth a warning: Edge stops a
+            // cancelled request on purpose.
             guard !Task.isCancelled, synthesisID == synthesisGeneration else {
                 return .failed(error)
             }
+
+            logger.warning("Edge TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
 
             guard let utteranceGeneration = await fallbackTTS.startSpeaking(text: text, rate: rate) else {
                 logger.error("Fallback TTS could not start")
