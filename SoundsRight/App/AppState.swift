@@ -194,11 +194,11 @@ final class AppState: ObservableObject {
     /// between playbacks, or when the audio came without word timings.
     @Published private(set) var spokenWordIndex: Int?
 
-    /// True when the loaded audio is the lookup's, so the panel and HUD may
-    /// loop or replay it. A one shot's audio is not theirs to replay.
-    var hasLookupAudio: Bool {
-        audioPlayer.hasAudioData && ttsState.subject == .lookup
-    }
+    /// True while synthesized audio is loaded, which is what enables the
+    /// repeat toggle in the panel and HUD. The toggle always sets the
+    /// persistent preference, even while a Collection row plays; only lookup
+    /// audio is ever looped or replayed by it (see `toggleLoop`).
+    var hasAudioData: Bool { audioPlayer.hasAudioData }
 
     /// Incrementing this (re)arms the translation session task in TranslationView
     /// (Apple Translation framework) when no resident work loop is running.
@@ -1515,7 +1515,7 @@ final class AppState: ObservableObject {
             togglePlayPause()
             return true
         case .toggleLoop:
-            guard hasLookupAudio else { return false }
+            guard hasAudioData else { return false }
             toggleLoop()
             return true
         case .toggleSave:

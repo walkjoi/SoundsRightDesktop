@@ -46,7 +46,7 @@ struct SoundOnlyHUD: View {
                     )
             }
             .buttonStyle(.plain)
-            .disabled(!appState.hasLookupAudio)
+            .disabled(!appState.hasAudioData)
             .help(appState.repeatEnabled ? "Turn off repeat" : "Repeat")
 
             // Speed pill

@@ -126,7 +126,7 @@ struct PlaybackControls: View {
 
     private var isLoopDisabled: Bool {
         if case .loading = appState.lookupPlayback { return true }
-        return !appState.hasLookupAudio
+        return !appState.hasAudioData
     }
 
     private func playAction() {
