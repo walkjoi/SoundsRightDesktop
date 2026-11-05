@@ -41,4 +41,33 @@ final class PlaybackStateTests: XCTestCase {
         XCTAssertEqual(filtered.subject, PlaybackSubject.lookup)
         XCTAssertEqual(filtered.source, PlaybackSource.audio(looping: true))
     }
+
+    // MARK: - Rate Changes
+
+    /// The restart replays the subject that is live, never the lookup by
+    /// default: a Collection row changing speed must restart as itself.
+    func testRateChangeRestartsWhatIsPlayingOrLoading() {
+        XCTAssertEqual(
+            TTSPlaybackState.loading(.oneShot("serendipity")).rateChangeResponse,
+            RateChangeResponse.restart(.oneShot("serendipity"))
+        )
+        XCTAssertEqual(
+            TTSPlaybackState.playing(.fallback(generation: 2), .lookup).rateChangeResponse,
+            RateChangeResponse.restart(.lookup)
+        )
+    }
+
+    /// Audio synthesized at the old rate must not survive to be resumed or
+    /// repeated under the new rate's label.
+    func testRateChangeDropsAudioLoadedAtTheOldRate() {
+        let loaded: [TTSPlaybackState] = [
+            .paused(.audio(looping: false), .lookup),
+            .finished(.oneShot("serendipity")),
+            .error("offline", .lookup)
+        ]
+        for state in loaded {
+            XCTAssertEqual(state.rateChangeResponse, RateChangeResponse.discardLoadedAudio)
+        }
+        XCTAssertEqual(TTSPlaybackState.idle.rateChangeResponse, RateChangeResponse.noChange)
+    }
 }

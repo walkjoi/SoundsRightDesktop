@@ -91,6 +91,33 @@ enum TTSPlaybackState {
     func filtered(to subject: PlaybackSubject) -> TTSPlaybackState {
         self.subject == subject ? self : .idle
     }
+
+    /// What a playback rate change must do in this state. Anything loaded was
+    /// synthesized at the old rate, so it is either restarted or dropped.
+    var rateChangeResponse: RateChangeResponse {
+        switch self {
+        case .loading(let subject), .playing(_, let subject):
+            return .restart(subject)
+        case .paused, .finished, .error:
+            return .discardLoadedAudio
+        case .idle:
+            return .noChange
+        }
+    }
+}
+
+/// How a playback rate change treats the current playback, so the speed the
+/// pill shows is always the speed heard next.
+enum RateChangeResponse: Equatable {
+    /// Synthesize the subject again at the new rate: it is playing, or still
+    /// loading at the old one.
+    case restart(PlaybackSubject)
+    /// Drop audio synthesized at the old rate, so resuming or repeating it
+    /// cannot play the old speed under the new label; the next play starts
+    /// fresh at the new rate.
+    case discardLoadedAudio
+    /// Nothing is loaded; the next playback picks the rate up.
+    case noChange
 }
 
 @MainActor
@@ -1216,11 +1243,8 @@ final class AppState: ObservableObject {
 
         logger.info("Playback rate changed to \(rate.displayLabel)")
 
-        // Restart what is playing, or still synthesizing at the old rate, so
-        // the new rate is heard now. Paused audio keeps its place; the new
-        // rate applies from its next fresh start.
-        switch ttsState {
-        case .loading(let subject), .playing(_, let subject):
+        switch ttsState.rateChangeResponse {
+        case .restart(let subject):
             // Cancelling stops a synthesis still in flight at the old rate,
             // whichever task owns it, rather than leaving it to finish unheard.
             playbackTask?.cancel()
@@ -1228,7 +1252,12 @@ final class AppState: ObservableObject {
             restartPlaybackTask = Task {
                 await restartPlayback(of: subject)
             }
-        case .idle, .paused, .finished, .error:
+        case .discardLoadedAudio:
+            // Paused or finished audio is at the old rate: resuming or
+            // repeating it would contradict the pill. The next play starts
+            // fresh at the new rate.
+            stopTTS()
+        case .noChange:
             break
         }
     }
