@@ -920,6 +920,10 @@ final class AppState: ObservableObject {
         stopReadAlong()
         await stopFallbackPlayback()
 
+        // Replaced while the fallback voice was being stopped (a speed tap,
+        // another play): a synthesis started now would only be thrown away.
+        guard generation == playbackGeneration, !Task.isCancelled else { return }
+
         let result = await ttsManager.synthesize(text: text, voice: ttsVoice, rate: playbackRate)
         guard generation == playbackGeneration, !Task.isCancelled else {
             // Superseded — if our synthesize already started fallback speech, silence
@@ -1214,6 +1218,9 @@ final class AppState: ObservableObject {
         // rate applies from its next fresh start.
         switch ttsState {
         case .loading(let subject), .playing(_, let subject):
+            // Cancelling stops a synthesis still in flight at the old rate,
+            // whichever task owns it, rather than leaving it to finish unheard.
+            playbackTask?.cancel()
             restartPlaybackTask?.cancel()
             restartPlaybackTask = Task {
                 await restartPlayback(of: subject)
