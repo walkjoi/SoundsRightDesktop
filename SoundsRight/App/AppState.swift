@@ -2,6 +2,22 @@ import SwiftUI
 import KeyboardShortcuts
 import os
 
+/// What the panel's result area holds for the current lookup. One value
+/// instead of independent flags, so a lookup cannot be "loading" and "failed"
+/// at once, or show an error on top of the dictionary entry that replaced it.
+enum LookupState {
+    case idle
+    /// Nothing to show yet: a sentence translation, or a word's dictionary
+    /// lookup racing its plain translation.
+    case loading
+    case translated(TranslationResult)
+    /// Word, phonetics and English definitions are ready; the Chinese
+    /// definitions are still being translated while `translatingDefinitions`.
+    /// An English-only entry (older macOS, or a failed batch) ends at false.
+    case dictionary(DictionaryResult, translatingDefinitions: Bool)
+    case failed(String)
+}
+
 /// What is producing the sound while playback is live.
 enum PlaybackSource: Equatable {
     /// Synthesized (or cached) audio data in `AudioPlayer`; only this kind can
@@ -48,13 +64,33 @@ final class AppState: ObservableObject {
     // MARK: - Published State
 
     @Published var currentText: String = ""
-    @Published var translation: TranslationResult?
-    @Published var dictionaryResult: DictionaryResult?
-    @Published var isTranslating: Bool = false
-    @Published var translationError: String?
+    @Published var lookup: LookupState = .idle
+
+    var translation: TranslationResult? {
+        if case .translated(let result) = lookup { return result }
+        return nil
+    }
+
+    var dictionaryResult: DictionaryResult? {
+        if case .dictionary(let result, _) = lookup { return result }
+        return nil
+    }
+
+    var isTranslating: Bool {
+        if case .loading = lookup { return true }
+        return false
+    }
+
+    var translationError: String? {
+        if case .failed(let message) = lookup { return message }
+        return nil
+    }
 
     /// True while the Chinese translation of dictionary definitions is in flight — word + phonetics are already visible.
-    @Published var isTranslatingDefinitions: Bool = false
+    var isTranslatingDefinitions: Bool {
+        if case .dictionary(_, translatingDefinitions: true) = lookup { return true }
+        return false
+    }
 
     @Published var ttsState: TTSPlaybackState = .idle {
         didSet { updateSpeechEscapeClaim() }
@@ -510,12 +546,8 @@ final class AppState: ObservableObject {
         requestID: Int
     ) async {
         currentText = text
-        translation = nil
-        dictionaryResult = nil
-        translationError = nil
+        lookup = .idle
         pendingTranslationWork = nil
-        isTranslating = false
-        isTranslatingDefinitions = false
         ttsState = .idle
         wasInputTruncated = truncated
 
@@ -624,12 +656,8 @@ final class AppState: ObservableObject {
         guard !currentText.isEmpty else { return }
         guard requestID == currentRequestID else { return }
 
-        isTranslating = true
-        translationError = nil
-        translation = nil
-        dictionaryResult = nil
+        lookup = .loading
         pendingTranslationWork = nil
-        isTranslatingDefinitions = false
         lookupStartedAt = .now
 
         if let word = translationService.dictionaryLookupCandidate(from: currentText) {
@@ -640,8 +668,7 @@ final class AppState: ObservableObject {
         if #available(macOS 15, *) {
             startSentenceTranslation(requestID: requestID)
         } else {
-            isTranslating = false
-            translationError = "Translation requires macOS 15 (Sequoia) or later."
+            lookup = .failed("Translation requires macOS 15 (Sequoia) or later.")
         }
     }
 
@@ -649,8 +676,7 @@ final class AppState: ObservableObject {
         let cacheKey = word.lowercased()
 
         if let cached = dictionaryCache.value(for: cacheKey) {
-            dictionaryResult = cached
-            isTranslating = false
+            lookup = .dictionary(cached, translatingDefinitions: false)
             recentLookupStore.record(
                 text: currentText,
                 summary: cached.meanings.first.map { $0.translatedDefinition ?? $0.definition }
@@ -672,17 +698,14 @@ final class AppState: ObservableObject {
             let result = try await translationService.lookupDictionaryEntry(for: word)
             guard requestID == currentRequestID else { return }
             if #available(macOS 15, *) {
-                dictionaryResult = result
-                isTranslating = false
-                isTranslatingDefinitions = true
+                lookup = .dictionary(result, translatingDefinitions: true)
                 enqueueTranslationWork(.dictionaryDefinitions(
                     PendingDictionaryResult(requestID: requestID, result: result)
                 ))
                 resizePanelToFitContent()
             } else {
                 dictionaryCache.insert(result, for: cacheKey)
-                dictionaryResult = result
-                isTranslating = false
+                lookup = .dictionary(result, translatingDefinitions: false)
                 recentLookupStore.record(text: currentText, summary: result.meanings.first?.definition)
                 resizePanelToFitContent()
             }
@@ -693,8 +716,7 @@ final class AppState: ObservableObject {
             if #available(macOS 15, *) {
                 // The racing sentence translation is already covering this word.
             } else {
-                translationError = error.localizedDescription
-                isTranslating = false
+                lookup = .failed(error.localizedDescription)
                 resizePanelToFitContent()
             }
         }
@@ -705,8 +727,7 @@ final class AppState: ObservableObject {
     @available(macOS 15, *)
     private func startSentenceTranslation(requestID: Int) {
         if let cached = translationCache.value(for: currentText) {
-            translation = cached
-            isTranslating = false
+            lookup = .translated(cached)
             recentLookupStore.record(text: currentText, summary: cached.translated)
             resizePanelToFitContent()
             logLookupLatency("Translation served from cache")
@@ -720,12 +741,10 @@ final class AppState: ObservableObject {
         guard requestID == currentRequestID else { return }
         // For a single word the dictionary entry is the richer answer — once
         // it has landed, the racing sentence translation is redundant.
-        guard dictionaryResult == nil else { return }
+        if case .dictionary = lookup { return }
         let result = TranslationResult(translated: text)
         translationCache.insert(result, for: currentText)
-        translation = result
-        isTranslating = false
-        translationError = nil
+        lookup = .translated(result)
         recentLookupStore.record(text: currentText, summary: text)
         resizePanelToFitContent()
         logLookupLatency("Translation completed")
@@ -737,9 +756,8 @@ final class AppState: ObservableObject {
         // The most likely cause is a session gone bad — drop the resident loop
         // so the next lookup starts a fresh session.
         resetTranslationSession()
-        guard dictionaryResult == nil else { return }
-        translationError = error.localizedDescription
-        isTranslating = false
+        if case .dictionary = lookup { return }
+        lookup = .failed(error.localizedDescription)
         resizePanelToFitContent()
         logger.error("Translation failed: \(error.localizedDescription)")
     }
@@ -750,12 +768,9 @@ final class AppState: ObservableObject {
         if let key = translationService.dictionaryLookupCandidate(from: currentText)?.lowercased() {
             dictionaryCache.insert(result, for: key)
         }
-        dictionaryResult = result
-        isTranslatingDefinitions = false
         // The dictionary entry supersedes whatever the racing sentence
         // translation produced (or the error it hit).
-        translation = nil
-        translationError = nil
+        lookup = .dictionary(result, translatingDefinitions: false)
         recentLookupStore.record(
             text: currentText,
             summary: result.meanings.first.map { $0.translatedDefinition ?? $0.definition }
@@ -770,8 +785,7 @@ final class AppState: ObservableObject {
     func didFailDictionaryTranslation(fallback: DictionaryResult, error: Error, requestID: Int) {
         guard requestID == currentRequestID else { return }
         resetTranslationSession()
-        dictionaryResult = fallback
-        isTranslatingDefinitions = false
+        lookup = .dictionary(fallback, translatingDefinitions: false)
         recentLookupStore.record(text: currentText, summary: fallback.meanings.first?.definition)
         resizePanelToFitContent()
         logger.error("Dictionary translation failed, showing English-only: \(error.localizedDescription)")
@@ -1541,8 +1555,12 @@ final class AppState: ObservableObject {
     /// True when there's a user-visible translation/dictionary result that's eligible to save.
     var canSaveCurrentToCollection: Bool {
         guard !currentText.isEmpty else { return false }
-        if isTranslating || isTranslatingDefinitions { return false }
-        return dictionaryResult != nil || translation != nil
+        switch lookup {
+        case .translated, .dictionary(_, translatingDefinitions: false):
+            return true
+        case .idle, .loading, .dictionary(_, translatingDefinitions: true), .failed:
+            return false
+        }
     }
 
     func toggleSaveCurrentToCollection() {
