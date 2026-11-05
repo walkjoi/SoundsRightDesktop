@@ -605,7 +605,7 @@ final class AppState: ObservableObject {
         case .translation:
             showPanel()
             if autoPlay {
-                startPlayback { await self.playTTS() }
+                startPlayback(.lookup)
             }
             await startTranslation(requestID: requestID)
         case .soundOnly:
@@ -613,15 +613,23 @@ final class AppState: ObservableObject {
             if truncated {
                 showToast("Reading the first \(AppConstants.maxInputLength) characters")
             }
-            startPlayback { await self.playTTS() }
+            startPlayback(.lookup)
         }
     }
 
-    /// Cancel-and-replace owner for playback tasks, so a new playback intent always
-    /// invalidates the previous one (cancellation reaches TTSManager's fallback guard).
-    private func startPlayback(_ operation: @escaping @MainActor @Sendable () async -> Void) {
+    /// Cancel-and-replace owner for playback intents: a new one invalidates
+    /// the previous play and any pending rate restart (cancellation reaches
+    /// TTSManager's fallback guard and stops a synthesis still in flight).
+    /// The subject goes into `ttsState` now rather than when the task first
+    /// runs, so anything that asks what is playing in between, such as
+    /// closing the panel, already sees this intent.
+    private func startPlayback(_ subject: PlaybackSubject) {
+        logger.info("Starting TTS playback")
         playbackTask?.cancel()
-        playbackTask = Task { await operation() }
+        restartPlaybackTask?.cancel()
+        restartPlaybackTask = nil
+        ttsState = .loading(subject)
+        playbackTask = Task { await self.synthesizeAndPlay(subject) }
     }
 
     /// Stops any AVSpeech fallback speech. Unconditional (not gated on tracked state):
@@ -899,11 +907,6 @@ final class AppState: ObservableObject {
 
     // MARK: - TTS Playback
 
-    func playTTS() async {
-        logger.info("Starting TTS playback")
-        await synthesizeAndPlay(.lookup)
-    }
-
     /// The single loading → playing/error transition shared by every playback
     /// intent, so the entry points cannot drift apart. The subject rides in
     /// every state this produces, which is what lets a rate change restart
@@ -1110,7 +1113,7 @@ final class AppState: ObservableObject {
         case .paused:
             resumeTTS()
         case .idle, .finished, .error:
-            startPlayback { await self.playTTS() }
+            startPlayback(.lookup)
         case .loading:
             return
         }
@@ -1681,19 +1684,12 @@ final class AppState: ObservableObject {
     }
 
     /// Synthesize and play arbitrary text (used by the Collection window and voice preview).
-    /// Stops any prior playback and does not touch translation state.
+    /// Stops any prior playback and does not touch translation state. A one shot
+    /// on purpose: repeat applies to lookup playback, where a repeat toggle is
+    /// on screen, and Collection rows and previews have none.
     func playCollectionItem(text: String) {
-        startPlayback { await self.performCollectionPlayback(text: text) }
-    }
-
-    private func performCollectionPlayback(text: String) async {
         guard !text.isEmpty else { return }
-        logger.info("Playing collection item")
-        restartPlaybackTask?.cancel()
-        restartPlaybackTask = nil
-        // One-shot on purpose: repeat applies to lookup playback, where a
-        // repeat toggle is on screen — collection rows and previews have none.
-        await synthesizeAndPlay(.oneShot(text))
+        startPlayback(.oneShot(text))
     }
 
     /// Plays a short sample phrase without disturbing the current selection,
