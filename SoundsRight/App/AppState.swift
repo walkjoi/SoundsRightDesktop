@@ -1689,6 +1689,11 @@ final class AppState: ObservableObject {
     /// on screen, and Collection rows and previews have none.
     func playCollectionItem(text: String) {
         guard !text.isEmpty else { return }
+        // The Sound Only HUD only controls its own session's speech, which this
+        // replaces; left up, it would sit idle at the cursor until dismissed.
+        hideSoundOnlyTask?.cancel()
+        hideSoundOnlyTask = nil
+        soundOnlyPanel?.orderOut(nil)
         startPlayback(.oneShot(text))
     }
 
