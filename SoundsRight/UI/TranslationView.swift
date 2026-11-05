@@ -248,7 +248,7 @@ private struct TranslationSessionModifier: ViewModifier {
 #Preview {
     let s = AppState()
     s.currentText = "The quick brown fox jumps over the lazy dog."
-    s.translation = TranslationResult(translated: "快速的棕色狐狸跳过了懒狗")
+    s.lookup = .translated(TranslationResult(translated: "快速的棕色狐狸跳过了懒狗"))
     return TranslationView(appState: s)
 }
 #endif

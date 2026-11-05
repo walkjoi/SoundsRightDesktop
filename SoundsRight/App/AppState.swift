@@ -2,11 +2,40 @@ import SwiftUI
 import KeyboardShortcuts
 import os
 
+/// What the panel's result area holds for the current lookup. One value
+/// instead of independent flags, so a lookup cannot be "loading" and "failed"
+/// at once, or show an error on top of the dictionary entry that replaced it.
+enum LookupState {
+    case idle
+    /// Nothing to show yet: a sentence translation, or a word's dictionary
+    /// lookup racing its plain translation.
+    case loading
+    case translated(TranslationResult)
+    /// Word, phonetics and English definitions are ready; the Chinese
+    /// definitions are still being translated while `translatingDefinitions`.
+    /// An English-only entry (older macOS, or a failed batch) ends at false.
+    case dictionary(DictionaryResult, translatingDefinitions: Bool)
+    case failed(String)
+}
+
+/// What is producing the sound while playback is live.
+enum PlaybackSource: Equatable {
+    /// Synthesized (or cached) audio data in `AudioPlayer`; only this kind can
+    /// loop or replay.
+    case audio(looping: Bool)
+    /// The AVSpeech fallback voice, identified by its utterance generation so
+    /// finish/cancel events and stop requests reach the exact utterance.
+    case fallback(generation: Int)
+}
+
+/// The one source of truth for playback. The source and loop mode live inside
+/// the live cases rather than in flags beside them, so "looping fallback
+/// speech" or "a fallback generation while idle" cannot be represented.
 enum TTSPlaybackState {
     case idle
     case loading
-    case playing
-    case paused
+    case playing(PlaybackSource)
+    case paused(PlaybackSource)
     case finished
     case error(String)
 
@@ -14,8 +43,18 @@ enum TTSPlaybackState {
         switch self {
         case .loading, .playing:
             return true
-        default:
+        case .idle, .paused, .finished, .error:
             return false
+        }
+    }
+
+    /// The live source while playing or paused; nil otherwise.
+    var source: PlaybackSource? {
+        switch self {
+        case .playing(let source), .paused(let source):
+            return source
+        case .idle, .loading, .finished, .error:
+            return nil
         }
     }
 }
@@ -25,22 +64,37 @@ final class AppState: ObservableObject {
     // MARK: - Published State
 
     @Published var currentText: String = ""
-    @Published var translation: TranslationResult?
-    @Published var dictionaryResult: DictionaryResult?
-    @Published var isTranslating: Bool = false
-    @Published var translationError: String?
+    @Published var lookup: LookupState = .idle
+
+    var translation: TranslationResult? {
+        if case .translated(let result) = lookup { return result }
+        return nil
+    }
+
+    var dictionaryResult: DictionaryResult? {
+        if case .dictionary(let result, _) = lookup { return result }
+        return nil
+    }
+
+    var isTranslating: Bool {
+        if case .loading = lookup { return true }
+        return false
+    }
+
+    var translationError: String? {
+        if case .failed(let message) = lookup { return message }
+        return nil
+    }
 
     /// True while the Chinese translation of dictionary definitions is in flight — word + phonetics are already visible.
-    @Published var isTranslatingDefinitions: Bool = false
+    var isTranslatingDefinitions: Bool {
+        if case .dictionary(_, translatingDefinitions: true) = lookup { return true }
+        return false
+    }
 
     @Published var ttsState: TTSPlaybackState = .idle {
         didSet { updateSpeechEscapeClaim() }
     }
-
-    /// True while the loaded audio is actually looping. Distinct from the
-    /// persistent `repeatEnabled` preference the toggle buttons show: fallback
-    /// speech can't loop, and turning repeat off lets the current pass finish.
-    @Published private(set) var isLooping: Bool = false
 
     @Published var isPanelVisible: Bool = false {
         didSet { updateSpeechEscapeClaim() }
@@ -55,7 +109,18 @@ final class AppState: ObservableObject {
 
     /// True while the offline AVSpeech fallback voice is what the user hears —
     /// shown as a badge so the quality drop (and disabled loop) is explained.
-    @Published var isUsingFallbackVoice: Bool = false
+    var isUsingFallbackVoice: Bool {
+        fallbackGeneration != nil
+    }
+
+    /// Generation of the live fallback utterance, nil when playback is
+    /// audio-data-backed or not live.
+    private var fallbackGeneration: Int? {
+        if case .fallback(let generation)? = ttsState.source {
+            return generation
+        }
+        return nil
+    }
 
     /// Index (into the whitespace-separated words of `currentText`) of the word
     /// currently being spoken — drives read-along highlighting. Nil when idle,
@@ -175,11 +240,6 @@ final class AppState: ObservableObject {
     /// cannot clobber a newer one's audio or state.
     private var playbackGeneration = 0
 
-    /// Generation of the live AVSpeech fallback utterance, nil when playback is
-    /// audio-data-backed (or idle). Lets finish/cancel events and stop requests be
-    /// attributed to the exact utterance instead of a racy Bool.
-    private var activeFallbackGeneration: Int?
-
     /// Word timings for the audio currently loaded in the player. Outlives the
     /// tracking task so loop/replay of the same audio can re-track.
     private var currentWordBoundaries: [WordBoundary] = []
@@ -231,30 +291,50 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 // Boundaries are kept so a loop/replay of the same audio re-tracks.
                 self.stopReadAlongTracking()
-                if case .playing = self.ttsState {
+                // A looping player never finishes; turning repeat off lets the
+                // current pass run out, by which point the state says not looping.
+                if case .playing(.audio) = self.ttsState {
                     self.ttsState = .finished
-                    if self.lastActivationMode == .soundOnly && !self.isLooping {
+                    if self.lastActivationMode == .soundOnly {
                         self.hideSoundOnlyHUD()
                     }
                 }
             }
         }
 
-        // Mirror of audioPlayer.onFinished for the AVSpeech fallback path.
-        await ttsManager.setFallbackFinishedHandler { [weak self] generation, finishedNaturally in
-            guard let self, generation == self.activeFallbackGeneration else { return }
-            self.activeFallbackGeneration = nil
-            guard finishedNaturally else { return }
-            switch self.ttsState {
-            // .paused as well: a pause click racing the utterance's natural finish
-            // must not strand the UI in a paused state with no speech to resume.
-            case .playing, .paused:
-                self.ttsState = .finished
-                if self.lastActivationMode == .soundOnly && !self.isLooping {
-                    self.hideSoundOnlyHUD()
+        // A decode failure stops the player without a finish callback; left
+        // unhandled, ttsState would stay .playing and keep Esc claimed.
+        audioPlayer.onFailed = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch self.ttsState {
+                case .playing(.audio), .paused(.audio):
+                    // The data is unplayable; replaying or looping it would fail again.
+                    self.audioPlayer.reset()
+                    self.stopReadAlong()
+                    self.ttsState = .error("Couldn't play the audio")
+                default:
+                    break
                 }
-            default:
-                break
+            }
+        }
+
+        // Mirror of audioPlayer.onFinished for the AVSpeech fallback path.
+        // Covers .paused as well: a pause click racing the utterance's natural
+        // finish must not strand the UI in a paused state with no speech to resume.
+        await ttsManager.setFallbackFinishedHandler { [weak self] generation, finishedNaturally in
+            guard let self, generation == self.fallbackGeneration else { return }
+            guard finishedNaturally else {
+                // Every stop we issue moves ttsState off this utterance first,
+                // so a cancel that still matches came from outside; without
+                // this the UI would show speech that is no longer there.
+                self.ttsState = .idle
+                return
+            }
+            self.ttsState = .finished
+            // Fallback speech never loops.
+            if self.lastActivationMode == .soundOnly {
+                self.hideSoundOnlyHUD()
             }
         }
 
@@ -440,7 +520,6 @@ final class AppState: ObservableObject {
     /// A pinned panel is left in place when the next session will reuse it.
     private func teardownActiveSession(for mode: ActivationMode) async {
         lastActivationMode = mode
-        isLooping = false
         playbackGeneration += 1
         hideSoundOnlyTask?.cancel()
         hideSoundOnlyTask = nil
@@ -450,8 +529,8 @@ final class AppState: ObservableObject {
         playbackTask = nil
         audioPlayer.reset()
         stopReadAlong()
-        await stopFallbackPlayback()
         ttsState = .idle
+        await stopFallbackPlayback()
         if !(isPanelPinned && mode == .translation) {
             hidePanel()
         }
@@ -467,15 +546,10 @@ final class AppState: ObservableObject {
         requestID: Int
     ) async {
         currentText = text
-        translation = nil
-        dictionaryResult = nil
-        translationError = nil
+        lookup = .idle
         pendingTranslationWork = nil
-        isTranslating = false
-        isTranslatingDefinitions = false
         ttsState = .idle
         wasInputTruncated = truncated
-        isUsingFallbackVoice = false
 
         recentLookupStore.record(text: text)
 
@@ -504,9 +578,9 @@ final class AppState: ObservableObject {
 
     /// Stops any AVSpeech fallback speech. Unconditional (not gated on tracked state):
     /// `FallbackTTSService.stop()` is an idempotent no-op when nothing is speaking, and an
-    /// untracked orphan utterance must still be silenced.
+    /// untracked orphan utterance must still be silenced. Callers move `ttsState` off
+    /// the utterance first, so its cancel event is recognized as ours.
     private func stopFallbackPlayback() async {
-        activeFallbackGeneration = nil
         await ttsManager.stopPlayback()
     }
 
@@ -582,12 +656,8 @@ final class AppState: ObservableObject {
         guard !currentText.isEmpty else { return }
         guard requestID == currentRequestID else { return }
 
-        isTranslating = true
-        translationError = nil
-        translation = nil
-        dictionaryResult = nil
+        lookup = .loading
         pendingTranslationWork = nil
-        isTranslatingDefinitions = false
         lookupStartedAt = .now
 
         if let word = translationService.dictionaryLookupCandidate(from: currentText) {
@@ -598,8 +668,7 @@ final class AppState: ObservableObject {
         if #available(macOS 15, *) {
             startSentenceTranslation(requestID: requestID)
         } else {
-            isTranslating = false
-            translationError = "Translation requires macOS 15 (Sequoia) or later."
+            lookup = .failed("Translation requires macOS 15 (Sequoia) or later.")
         }
     }
 
@@ -607,8 +676,7 @@ final class AppState: ObservableObject {
         let cacheKey = word.lowercased()
 
         if let cached = dictionaryCache.value(for: cacheKey) {
-            dictionaryResult = cached
-            isTranslating = false
+            lookup = .dictionary(cached, translatingDefinitions: false)
             recentLookupStore.record(
                 text: currentText,
                 summary: cached.meanings.first.map { $0.translatedDefinition ?? $0.definition }
@@ -630,17 +698,14 @@ final class AppState: ObservableObject {
             let result = try await translationService.lookupDictionaryEntry(for: word)
             guard requestID == currentRequestID else { return }
             if #available(macOS 15, *) {
-                dictionaryResult = result
-                isTranslating = false
-                isTranslatingDefinitions = true
+                lookup = .dictionary(result, translatingDefinitions: true)
                 enqueueTranslationWork(.dictionaryDefinitions(
                     PendingDictionaryResult(requestID: requestID, result: result)
                 ))
                 resizePanelToFitContent()
             } else {
                 dictionaryCache.insert(result, for: cacheKey)
-                dictionaryResult = result
-                isTranslating = false
+                lookup = .dictionary(result, translatingDefinitions: false)
                 recentLookupStore.record(text: currentText, summary: result.meanings.first?.definition)
                 resizePanelToFitContent()
             }
@@ -651,8 +716,7 @@ final class AppState: ObservableObject {
             if #available(macOS 15, *) {
                 // The racing sentence translation is already covering this word.
             } else {
-                translationError = error.localizedDescription
-                isTranslating = false
+                lookup = .failed(error.localizedDescription)
                 resizePanelToFitContent()
             }
         }
@@ -663,8 +727,7 @@ final class AppState: ObservableObject {
     @available(macOS 15, *)
     private func startSentenceTranslation(requestID: Int) {
         if let cached = translationCache.value(for: currentText) {
-            translation = cached
-            isTranslating = false
+            lookup = .translated(cached)
             recentLookupStore.record(text: currentText, summary: cached.translated)
             resizePanelToFitContent()
             logLookupLatency("Translation served from cache")
@@ -678,12 +741,10 @@ final class AppState: ObservableObject {
         guard requestID == currentRequestID else { return }
         // For a single word the dictionary entry is the richer answer — once
         // it has landed, the racing sentence translation is redundant.
-        guard dictionaryResult == nil else { return }
+        if case .dictionary = lookup { return }
         let result = TranslationResult(translated: text)
         translationCache.insert(result, for: currentText)
-        translation = result
-        isTranslating = false
-        translationError = nil
+        lookup = .translated(result)
         recentLookupStore.record(text: currentText, summary: text)
         resizePanelToFitContent()
         logLookupLatency("Translation completed")
@@ -695,9 +756,8 @@ final class AppState: ObservableObject {
         // The most likely cause is a session gone bad — drop the resident loop
         // so the next lookup starts a fresh session.
         resetTranslationSession()
-        guard dictionaryResult == nil else { return }
-        translationError = error.localizedDescription
-        isTranslating = false
+        if case .dictionary = lookup { return }
+        lookup = .failed(error.localizedDescription)
         resizePanelToFitContent()
         logger.error("Translation failed: \(error.localizedDescription)")
     }
@@ -708,12 +768,9 @@ final class AppState: ObservableObject {
         if let key = translationService.dictionaryLookupCandidate(from: currentText)?.lowercased() {
             dictionaryCache.insert(result, for: key)
         }
-        dictionaryResult = result
-        isTranslatingDefinitions = false
         // The dictionary entry supersedes whatever the racing sentence
         // translation produced (or the error it hit).
-        translation = nil
-        translationError = nil
+        lookup = .dictionary(result, translatingDefinitions: false)
         recentLookupStore.record(
             text: currentText,
             summary: result.meanings.first.map { $0.translatedDefinition ?? $0.definition }
@@ -728,8 +785,7 @@ final class AppState: ObservableObject {
     func didFailDictionaryTranslation(fallback: DictionaryResult, error: Error, requestID: Int) {
         guard requestID == currentRequestID else { return }
         resetTranslationSession()
-        dictionaryResult = fallback
-        isTranslatingDefinitions = false
+        lookup = .dictionary(fallback, translatingDefinitions: false)
         recentLookupStore.record(text: currentText, summary: fallback.meanings.first?.definition)
         resizePanelToFitContent()
         logger.error("Dictionary translation failed, showing English-only: \(error.localizedDescription)")
@@ -797,17 +853,31 @@ final class AppState: ObservableObject {
 
     func playTTS() async {
         logger.info("Starting TTS playback")
+        await synthesizeAndPlay(currentText, purpose: .lookup)
+    }
+
+    /// Lookup playback honors the repeat preference and drives read-along over
+    /// the panel's text; one-shot playback (collection rows, voice preview)
+    /// does neither, because the panel's text is not what it speaks.
+    private enum PlaybackPurpose {
+        case lookup
+        case oneShot
+    }
+
+    /// The single loading → playing/error transition shared by every playback
+    /// intent, so the three entry points cannot drift apart.
+    private func synthesizeAndPlay(_ text: String, purpose: PlaybackPurpose) async {
         playbackGeneration += 1
         let generation = playbackGeneration
-        isLooping = false
-        ttsState = .loading
+
         // Clear stale audio so loop/replay affordances stay disabled while a fresh
         // synthesis (possibly fallback speech with no data) is in flight.
+        ttsState = .loading
         audioPlayer.reset()
         stopReadAlong()
         await stopFallbackPlayback()
 
-        let result = await ttsManager.synthesize(text: currentText, voice: ttsVoice, rate: playbackRate)
+        let result = await ttsManager.synthesize(text: text, voice: ttsVoice, rate: playbackRate)
         guard generation == playbackGeneration, !Task.isCancelled else {
             // Superseded — if our synthesize already started fallback speech, silence
             // it (generation-scoped, so a newer utterance is never touched).
@@ -819,12 +889,15 @@ final class AppState: ObservableObject {
 
         switch result {
         case .audio(let audio):
+            // Read on landing, not at the start: toggling repeat while the
+            // synthesis is in flight must still apply.
+            let loop = purpose == .lookup && repeatEnabled
             do {
-                try audioPlayer.play(data: audio.data, loop: repeatEnabled)
-                isLooping = repeatEnabled
-                isUsingFallbackVoice = false
-                ttsState = .playing
-                startReadAlong(with: audio.wordBoundaries)
+                try audioPlayer.play(data: audio.data, loop: loop)
+                ttsState = .playing(.audio(looping: loop))
+                if purpose == .lookup {
+                    startReadAlong(with: audio.wordBoundaries)
+                }
                 logger.info("Audio playback started")
             } catch {
                 ttsState = .error(error.localizedDescription)
@@ -832,9 +905,7 @@ final class AppState: ObservableObject {
             }
 
         case .fallbackUsed(let utteranceGeneration):
-            activeFallbackGeneration = utteranceGeneration
-            isUsingFallbackVoice = true
-            ttsState = .playing
+            ttsState = .playing(.fallback(generation: utteranceGeneration))
             logger.info("Fallback TTS playback started")
 
         case .failed(let error):
@@ -944,25 +1015,29 @@ final class AppState: ObservableObject {
     }
 
     func pauseTTS() {
+        guard case .playing(let source) = ttsState else { return }
         logger.info("Pausing TTS playback")
-        if activeFallbackGeneration != nil {
+        switch source {
+        case .fallback:
             Task { await ttsManager.pauseFallback() }
-        } else {
+        case .audio:
             audioPlayer.pause()
             suspendReadAlongTracking()
         }
-        ttsState = .paused
+        ttsState = .paused(source)
     }
 
     func resumeTTS() {
+        guard case .paused(let source) = ttsState else { return }
         logger.info("Resuming TTS playback")
-        if activeFallbackGeneration != nil {
+        switch source {
+        case .fallback:
             Task { await ttsManager.resumeFallback() }
-        } else {
+        case .audio:
             audioPlayer.resume()
             startReadAlongTracking(resetHighlight: false)
         }
-        ttsState = .playing
+        ttsState = .playing(source)
     }
 
     func togglePlayPause() {
@@ -981,16 +1056,14 @@ final class AppState: ObservableObject {
 
     func stopTTS() {
         logger.info("Stopping TTS playback")
-        isLooping = false
         playbackGeneration += 1
         playbackTask?.cancel()
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil
         audioPlayer.stop()
         stopReadAlong()
-        activeFallbackGeneration = nil
-        Task { await ttsManager.stopPlayback() }
         ttsState = .idle
+        Task { await ttsManager.stopPlayback() }
     }
 
     /// Toggles the persistent repeat preference (shared by the panel and the
@@ -1001,31 +1074,43 @@ final class AppState: ObservableObject {
         if repeatEnabled {
             logger.info("Repeat turned off")
             repeatEnabled = false
-            isLooping = false
             audioPlayer.setLooping(false)
+            setLiveAudioLooping(false)
         } else {
             logger.info("Repeat turned on")
             repeatEnabled = true
-            // Looping replays buffered audio data; fallback speech has none.
-            guard activeFallbackGeneration == nil else { return }
             switch ttsState {
-            case .playing, .paused:
+            case .playing(.fallback), .paused(.fallback):
+                // Looping replays buffered audio data; fallback speech has none.
+                return
+            case .playing(.audio), .paused(.audio):
                 audioPlayer.setLooping(true)
-                isLooping = true
+                setLiveAudioLooping(true)
             case .loading:
-                // A synthesis is in flight; playTTS applies the preference on landing.
+                // A synthesis is in flight; it reads the preference on landing.
                 break
             case .idle, .finished, .error:
                 do {
                     try audioPlayer.replayLooping()
-                    isLooping = true
-                    ttsState = .playing
+                    ttsState = .playing(.audio(looping: true))
                     startReadAlongTracking()
                 } catch {
                     ttsState = .error(error.localizedDescription)
                     logger.error("Loop failed: \(error.localizedDescription)")
                 }
             }
+        }
+    }
+
+    /// Rewrites the loop flag of live audio playback, keeping play/pause as is.
+    private func setLiveAudioLooping(_ looping: Bool) {
+        switch ttsState {
+        case .playing(.audio):
+            ttsState = .playing(.audio(looping: looping))
+        case .paused(.audio):
+            ttsState = .paused(.audio(looping: looping))
+        case .idle, .loading, .playing(.fallback), .paused(.fallback), .finished, .error:
+            break
         }
     }
 
@@ -1079,49 +1164,8 @@ final class AppState: ObservableObject {
 
     private func restartPlaybackForUpdatedRate() async {
         guard !currentText.isEmpty else { return }
-        playbackGeneration += 1
-        let generation = playbackGeneration
-
-        ttsState = .loading
-        audioPlayer.reset()
-        stopReadAlong()
-        await stopFallbackPlayback()
-
-        let result = await ttsManager.synthesize(text: currentText, voice: ttsVoice, rate: playbackRate)
-        guard generation == playbackGeneration, !Task.isCancelled else {
-            if case .fallbackUsed(let utteranceGeneration) = result {
-                await ttsManager.stopFallback(generation: utteranceGeneration)
-            }
-            return
-        }
-
-        switch result {
-        case .audio(let audio):
-            do {
-                try audioPlayer.play(data: audio.data, loop: repeatEnabled)
-                isLooping = repeatEnabled
-                isUsingFallbackVoice = false
-                ttsState = .playing
-                startReadAlong(with: audio.wordBoundaries)
-                logger.info("Restarted playback with updated rate")
-            } catch {
-                isLooping = false
-                ttsState = .error(error.localizedDescription)
-                logger.error("Failed to restart audio after rate change: \(error.localizedDescription)")
-            }
-
-        case .fallbackUsed(let utteranceGeneration):
-            isLooping = false
-            activeFallbackGeneration = utteranceGeneration
-            isUsingFallbackVoice = true
-            ttsState = .playing
-            logger.info("Fallback TTS playback restarted after rate change")
-
-        case .failed(let error):
-            isLooping = false
-            ttsState = .error(Self.friendlyTTSMessage(for: error))
-            logger.error("TTS synthesis failed after rate change: \(error.localizedDescription)")
-        }
+        logger.info("Restarting playback with updated rate")
+        await synthesizeAndPlay(currentText, purpose: .lookup)
     }
 
     // MARK: - Panel Management
@@ -1511,8 +1555,12 @@ final class AppState: ObservableObject {
     /// True when there's a user-visible translation/dictionary result that's eligible to save.
     var canSaveCurrentToCollection: Bool {
         guard !currentText.isEmpty else { return false }
-        if isTranslating || isTranslatingDefinitions { return false }
-        return dictionaryResult != nil || translation != nil
+        switch lookup {
+        case .translated, .dictionary(_, translatingDefinitions: false):
+            return true
+        case .idle, .loading, .dictionary(_, translatingDefinitions: true), .failed:
+            return false
+        }
     }
 
     func toggleSaveCurrentToCollection() {
@@ -1551,48 +1599,11 @@ final class AppState: ObservableObject {
     private func performCollectionPlayback(text: String) async {
         guard !text.isEmpty else { return }
         logger.info("Playing collection item")
-        playbackGeneration += 1
-        let generation = playbackGeneration
-
-        // One-shot on purpose: repeat applies to lookup playback, where a
-        // repeat toggle is on screen — collection rows and previews have none.
-        isLooping = false
         restartPlaybackTask?.cancel()
         restartPlaybackTask = nil
-        audioPlayer.reset()
-        // Collection audio plays without read-along: the panel's text (if any)
-        // is not what this audio speaks.
-        stopReadAlong()
-        await stopFallbackPlayback()
-
-        ttsState = .loading
-
-        let result = await ttsManager.synthesize(text: text, voice: ttsVoice, rate: playbackRate)
-        guard generation == playbackGeneration, !Task.isCancelled else {
-            if case .fallbackUsed(let utteranceGeneration) = result {
-                await ttsManager.stopFallback(generation: utteranceGeneration)
-            }
-            return
-        }
-
-        switch result {
-        case .audio(let audio):
-            do {
-                try audioPlayer.play(data: audio.data)
-                isUsingFallbackVoice = false
-                ttsState = .playing
-            } catch {
-                ttsState = .error(error.localizedDescription)
-                logger.error("Collection playback failed: \(error.localizedDescription)")
-            }
-        case .fallbackUsed(let utteranceGeneration):
-            activeFallbackGeneration = utteranceGeneration
-            isUsingFallbackVoice = true
-            ttsState = .playing
-        case .failed(let error):
-            ttsState = .error(Self.friendlyTTSMessage(for: error))
-            logger.error("Collection TTS synthesis failed: \(error.localizedDescription)")
-        }
+        // One-shot on purpose: repeat applies to lookup playback, where a
+        // repeat toggle is on screen — collection rows and previews have none.
+        await synthesizeAndPlay(text, purpose: .oneShot)
     }
 
     /// Plays a short sample phrase without disturbing the current selection,

@@ -150,15 +150,21 @@ enum WhisperModelStatus: Equatable {
 }
 
 /// Lifecycle of one dictation, as the HUD presents it.
+///
+/// Failures are not a phase: a failed activation returns to `.idle` and is
+/// reported through a toast, so there is never a failed HUD to dismiss.
 enum DictationPhase: Equatable {
     case idle
+    /// The hotkey fired and permissions are being checked (possibly behind a
+    /// system prompt); the microphone is not open yet. A distinct phase so a
+    /// release or a second press in this window is not mistaken for idle.
+    case starting
     case recording
     case transcribing
-    case failed(String)
 
     var isActive: Bool {
         switch self {
-        case .recording, .transcribing, .failed: return true
+        case .starting, .recording, .transcribing: return true
         case .idle: return false
         }
     }

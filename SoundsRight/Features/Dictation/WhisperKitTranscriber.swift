@@ -28,6 +28,11 @@ actor WhisperKitTranscriber: DictationTranscribing {
     /// actor and back in.
     private var loadTask: Task<Void, Never>?
     private var lastLoadFailure: String?
+    /// Identifies the load `loadTask` belongs to. Bumped whenever that load is
+    /// abandoned (variant switch, shutdown), so a superseded load can neither
+    /// clear its successor's `loadTask` nor publish a status for a model the
+    /// user has moved away from — its progress callbacks included.
+    private var loadGeneration = 0
 
     private var variant: WhisperModelVariant
     private var status: WhisperModelStatus = .notDownloaded
@@ -61,8 +66,7 @@ actor WhisperKitTranscriber: DictationTranscribing {
         guard newVariant != variant else { return }
         logger.info("Whisper model changed to \(newVariant.rawValue, privacy: .public)")
         variant = newVariant
-        loadTask?.cancel()
-        loadTask = nil
+        abandonLoad()
         await pipe?.unloadModels()
         pipe = nil
         loadedVariant = nil
@@ -74,8 +78,7 @@ actor WhisperKitTranscriber: DictationTranscribing {
     }
 
     func shutdown() async {
-        loadTask?.cancel()
-        loadTask = nil
+        abandonLoad()
         await pipe?.unloadModels()
         pipe = nil
         loadedVariant = nil
@@ -205,7 +208,9 @@ actor WhisperKitTranscriber: DictationTranscribing {
         if let pipe, loadedVariant == variant { return pipe }
 
         if loadTask == nil {
-            loadTask = Task { await self.performLoad() }
+            loadGeneration += 1
+            let generation = loadGeneration
+            loadTask = Task { await self.performLoad(generation: generation) }
         }
         await loadTask?.value
 
@@ -217,8 +222,14 @@ actor WhisperKitTranscriber: DictationTranscribing {
 
     /// Actor-isolated on purpose: the pipeline is built and stored without ever
     /// leaving this actor. The `await`s inside still let other calls in.
-    private func performLoad() async {
-        defer { loadTask = nil }
+    private func performLoad(generation: Int) async {
+        defer {
+            // Only the current load owns `loadTask`; a superseded one finishing
+            // late must not orphan the load that replaced it.
+            if generation == loadGeneration {
+                loadTask = nil
+            }
+        }
 
         let variant = self.variant
         lastLoadFailure = nil
@@ -231,10 +242,11 @@ actor WhisperKitTranscriber: DictationTranscribing {
                 from: AppConstants.whisperModelRepository,
                 progressCallback: { [weak self] progress in
                     // Only `self` is captured, and an actor reference is Sendable.
-                    self?.reportDownloadProgress(progress.fractionCompleted)
+                    self?.reportDownloadProgress(progress.fractionCompleted, generation: generation)
                 }
             )
 
+            guard generation == loadGeneration else { return }
             publish(.loading)
 
             let config = WhisperKitConfig(
@@ -252,8 +264,8 @@ actor WhisperKitTranscriber: DictationTranscribing {
             )
             let loaded = try await WhisperKit(config)
 
-            // A variant switch during the load makes this result stale.
-            guard self.variant == variant else {
+            // A variant switch (or shutdown) during the load makes this result stale.
+            guard generation == loadGeneration, self.variant == variant else {
                 await loaded.unloadModels()
                 return
             }
@@ -263,6 +275,8 @@ actor WhisperKitTranscriber: DictationTranscribing {
             publish(.ready)
             logger.info("Whisper model ready: \(variant.rawValue, privacy: .public)")
         } catch {
+            // Abandoning a load cancels it; that is not a failure to report.
+            guard generation == loadGeneration else { return }
             let message = Self.friendlyLoadFailure(error)
             lastLoadFailure = message
             publish(.failed(message))
@@ -270,16 +284,31 @@ actor WhisperKitTranscriber: DictationTranscribing {
         }
     }
 
-    private nonisolated func reportDownloadProgress(_ fraction: Double) {
-        Task { await self.publishDownloadProgress(fraction) }
+    private nonisolated func reportDownloadProgress(_ fraction: Double, generation: Int) {
+        Task { await self.publishDownloadProgress(fraction, generation: generation) }
     }
 
     /// Forwards progress only once it has moved by a percentage point, the
     /// smallest step any UI showing this renders.
-    private func publishDownloadProgress(_ fraction: Double) {
+    ///
+    /// Each callback hops in through its own task, so one can land after the
+    /// download has already finished. Progress is only published while the
+    /// same load is still downloading: a late hop must never drag the status
+    /// back from `.loading` or `.ready`, or from another variant's
+    /// `.notDownloaded`.
+    private func publishDownloadProgress(_ fraction: Double, generation: Int) {
+        guard generation == loadGeneration, case .downloading = status else { return }
         guard fraction - publishedDownloadFraction >= 0.01 else { return }
         publishedDownloadFraction = fraction
         publish(.downloading(fractionCompleted: fraction))
+    }
+
+    /// Cancels the in-flight load and disowns it, so nothing it does after
+    /// this point reaches `loadTask` or the published status.
+    private func abandonLoad() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        loadTask = nil
     }
 
     private static func friendlyLoadFailure(_ error: Error) -> String {

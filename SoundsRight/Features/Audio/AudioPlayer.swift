@@ -14,6 +14,10 @@ final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
     private(set) var isPlaying: Bool = false
 
     var onFinished: (() -> Void)?
+    /// Called when the loaded audio cannot be decoded mid-playback. AVFoundation
+    /// stops the player without a finish callback in that case, so without this
+    /// the caller would believe playback is still running.
+    var onFailed: ((_ message: String?) -> Void)?
 
     var hasAudioData: Bool { lastAudioData != nil }
 
@@ -102,20 +106,34 @@ final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
 
     // MARK: - AVAudioPlayerDelegate
 
+    // Callbacks are attributed by identity: one can arrive after `play` or
+    // `stop` has already replaced the player, and a stale event must not end
+    // (or fail) the audio that is playing now.
+
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        // ObjectIdentifier is Sendable; the player itself must not cross actors.
+        let key = ObjectIdentifier(player)
         Task { @MainActor in
+            guard self.isCurrent(key) else { return }
             self.isPlaying = false
             self.onFinished?()
         }
     }
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        let key = ObjectIdentifier(player)
+        let message = error?.localizedDescription
         Task { @MainActor in
+            guard self.isCurrent(key) else { return }
             self.isPlaying = false
-            if let error {
-                self.logger.error("Audio decoding error: \(error.localizedDescription)")
-            }
+            self.logger.error("Audio decoding error: \(message ?? "unknown")")
+            self.onFailed?(message)
         }
+    }
+
+    private func isCurrent(_ key: ObjectIdentifier) -> Bool {
+        guard let player else { return false }
+        return ObjectIdentifier(player) == key
     }
 }
 
