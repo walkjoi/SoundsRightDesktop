@@ -240,6 +240,24 @@ final class AppState: ObservableObject {
             }
         }
 
+        // A decode failure stops the player without a finish callback; left
+        // unhandled, ttsState would stay .playing and keep Esc claimed.
+        audioPlayer.onFailed = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch self.ttsState {
+                case .playing, .paused:
+                    self.isLooping = false
+                    // The data is unplayable; replaying or looping it would fail again.
+                    self.audioPlayer.reset()
+                    self.stopReadAlong()
+                    self.ttsState = .error("Couldn't play the audio")
+                default:
+                    break
+                }
+            }
+        }
+
         // Mirror of audioPlayer.onFinished for the AVSpeech fallback path.
         await ttsManager.setFallbackFinishedHandler { [weak self] generation, finishedNaturally in
             guard let self, generation == self.activeFallbackGeneration else { return }
