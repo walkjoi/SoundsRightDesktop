@@ -10,8 +10,8 @@ import os
 /// the download continues in the background.
 actor DictationManager {
 
-    private let whisper: WhisperKitTranscriber
-    private let appleSpeech = AppleSpeechTranscriber()
+    private let whisper: any WhisperTranscribing
+    private let appleSpeech: any DictationTranscribing
 
     /// The download/load running in the background, so the clip that triggered
     /// it is not held up and repeated calls while it runs do not stack. Cleared
@@ -27,6 +27,14 @@ actor DictationManager {
 
     init(modelVariant: WhisperModelVariant) {
         whisper = WhisperKitTranscriber(variant: modelVariant)
+        appleSpeech = AppleSpeechTranscriber()
+    }
+
+    /// Takes its engines from outside, so tests can drive the routing and the
+    /// warmup with stubs.
+    init(whisper: any WhisperTranscribing, builtIn: any DictationTranscribing) {
+        self.whisper = whisper
+        appleSpeech = builtIn
     }
 
     // MARK: - Configuration
@@ -55,6 +63,12 @@ actor DictationManager {
         abandonWhisperWarmup()
         await whisper.shutdown()
         await appleSpeech.shutdown()
+    }
+
+    /// Waits for the running warmup, if any, to finish. For tests, which need
+    /// to observe what an attempt did before starting the next.
+    func settleWhisperWarmup() async {
+        await whisperWarmupTask?.value
     }
 
     // MARK: - Transcription
@@ -94,6 +108,18 @@ actor DictationManager {
             } catch let error as DictationError where error == .emptyTranscript {
                 // Whisper heard nothing; a second engine would only invent text.
                 throw error
+            } catch DictationError.modelUnavailable(_) {
+                // The model went away between the readiness check and this
+                // clip (a model switch, a failed reload). Name why from its
+                // status, as the not-ready path above does, rather than
+                // blaming the clip.
+                let status = await whisper.modelStatus
+                logger.info("Whisper model unavailable mid-clip, transcribing with the built-in engine")
+                return try await transcribeWithBuiltInEngine(
+                    audio,
+                    language: language,
+                    fallback: WhisperFallback(modelStatus: status)
+                )
             } catch {
                 logger.warning("""
                 Whisper failed, falling back to the built-in engine: \

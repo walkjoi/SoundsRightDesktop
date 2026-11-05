@@ -32,7 +32,7 @@ Runs `swift build` on the root `Package.swift`, assembles `build.noindex/SoundsR
 
 ### Tests
 
-`SoundsRightTests/` is an XCTest target covering the pure logic (transcript cleanup, two-language arbitration, WAV encoding, the audio cache's disk container, the engine fallback reason, playback subject filtering). Running it needs Xcode and, without a signing team, ad-hoc flags:
+`SoundsRightTests/` is an XCTest target covering the pure logic (transcript cleanup, two-language arbitration, WAV encoding, the audio cache's disk container, dictation routing and warmup through stub engines, playback subject filtering and rate changes). Running it needs Xcode and, without a signing team, ad-hoc flags:
 
 ```bash
 xcodebuild -scheme SoundsRight -destination 'platform=macOS' \
@@ -78,7 +78,7 @@ Either path feeds TTS synthesis -> audio playback. Results can be saved to Colle
 1. **WhisperKit** — Whisper large-v3-turbo via Core ML, downloaded from `argmaxinc/whisperkit-coreml` on first use (632 MB default). The only engine that keeps English words intact inside a Chinese sentence.
 2. **AppleSpeechTranscriber** — `SpeechAnalyzer`/`SpeechTranscriber` on macOS 26+, `SFSpeechRecognizer` below. No download, so it transcribes clips recorded while the Whisper model is still installing, and catches any Whisper failure.
 
-A clip that falls back carries the reason on its transcript (`WhisperFallback`: downloading, loading, unavailable, or a failed transcription), recorded when the manager falls back, so the toast names the cause that applied then. The warmup slot (`whisperWarmupTask`) clears when an attempt ends, success or failure, so Settings → Retry and later warmups can try again; clips themselves do not retry a failed model, so one that can never load is not reloaded on every dictation.
+A clip that falls back carries the reason on its transcript (`WhisperFallback`: downloading, loading, unavailable, or a failed transcription), recorded when the manager falls back, so the toast names the cause that applied then. The warmup slot (`whisperWarmupTask`) clears when an attempt ends, success or failure, so Settings → Retry and later warmups can try again; clips themselves do not retry a failed model, so one that can never load is not reloaded on every dictation. A model that disappears between the readiness check and the clip (`modelUnavailable` from Whisper) is reported by its status, not as a failed clip. The manager takes its engines as `WhisperTranscribing` / `DictationTranscribing`, so `DictationManagerTests` drives it with stubs instead of a real model.
 
 Clips are rejected before either engine sees them when they fall under `dictationMinDuration` or `dictationSilencePeakThreshold` — Whisper invents a fluent sentence out of room tone.
 
