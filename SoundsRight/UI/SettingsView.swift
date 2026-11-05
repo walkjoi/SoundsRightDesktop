@@ -172,7 +172,11 @@ struct GeneralSettingsTab: View {
         .padding(.top, 8)
         // The settings window's hosting view is cached across opens, so .onAppear fires
         // only once; re-sync with the system state whenever the window becomes key.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            // Only this window coming back can follow a change made in System
+            // Settings. The translation panel becomes key on every lookup, and
+            // the status read is an IPC call.
+            guard (notification.object as? NSWindow)?.contentView is NSHostingView<SettingsView> else { return }
             syncLaunchAtLogin()
         }
     }
