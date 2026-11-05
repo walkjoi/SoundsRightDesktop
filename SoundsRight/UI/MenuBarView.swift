@@ -36,9 +36,12 @@ struct MenuBarView: View {
                 activateFromMenu(.translation)
             }
 
+            // `.starting` too: the row's action cancels a start in progress.
+            let isDictating = dictationController.phase == .recording
+                || dictationController.phase == .starting
             MenuRow(
-                icon: dictationController.phase == .recording ? "stop.circle.fill" : "mic",
-                label: dictationController.phase == .recording ? "Stop Dictation" : "Dictate",
+                icon: isDictating ? "stop.circle.fill" : "mic",
+                label: isDictating ? "Stop Dictation" : "Dictate",
                 detail: dictationDetail
             ) {
                 dismiss()

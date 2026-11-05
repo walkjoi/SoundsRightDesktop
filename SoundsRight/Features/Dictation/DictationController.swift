@@ -122,16 +122,21 @@ final class DictationController: ObservableObject {
     func handleKeyDown(saveRecording: Bool) {
         keyDownAt = .now
 
-        if phase == .recording {
+        switch phase {
+        case .recording:
             // Second press of a latched recording: finish it, and make sure the
             // matching key-up is not mistaken for a push-to-talk release.
             pressStartedRecording = false
             stopAndTranscribe()
-            return
+        case .starting:
+            // Second press before the microphone opened (a tap that latched
+            // while a permission prompt was up): ending it means not starting.
+            pressStartedRecording = false
+            cancel()
+        case .idle, .transcribing:
+            pressStartedRecording = true
+            start(saveRecording: saveRecording)
         }
-
-        pressStartedRecording = true
-        start(saveRecording: saveRecording)
     }
 
     func handleKeyUp() {
@@ -140,23 +145,40 @@ final class DictationController: ObservableObject {
             pressStartedRecording = false
         }
 
-        guard phase == .recording, pressStartedRecording, let keyDownAt else { return }
+        guard pressStartedRecording, let keyDownAt else { return }
 
         let held = keyDownAt.duration(to: .now)
         let heldSeconds = TimeInterval(held.components.seconds)
             + Double(held.components.attoseconds) / 1e18
-
-        if heldSeconds >= AppConstants.dictationHoldThreshold {
-            stopAndTranscribe()
+        guard heldSeconds >= AppConstants.dictationHoldThreshold else {
+            // A quick tap leaves the recording latched (or about to latch);
+            // the next press ends it.
+            return
         }
-        // A quick tap leaves the recording latched; the next press ends it.
+
+        switch phase {
+        case .recording:
+            stopAndTranscribe()
+        case .starting:
+            // Push-to-talk released before the microphone ever opened — the
+            // key was held through a permission prompt. The gesture is over,
+            // so recording now would latch a session the user already ended.
+            logger.info("Push-to-talk released before recording began — not starting")
+            cancel()
+            showToast?("Dictation didn't start — press the shortcut again", .info)
+        case .idle, .transcribing:
+            break
+        }
     }
 
     /// Menu bar entry — always a plain toggle, since there is no key to hold.
     func toggleFromMenu() {
-        if phase == .recording {
+        switch phase {
+        case .recording:
             stopAndTranscribe()
-        } else {
+        case .starting:
+            cancel()
+        case .idle, .transcribing:
             start(saveRecording: false)
         }
     }
@@ -175,23 +197,28 @@ final class DictationController: ObservableObject {
 
     private func start(saveRecording: Bool) {
         switch phase {
-        case .recording:
+        case .starting, .recording:
             return
         case .transcribing:
             // Starting over would bump `activationID`, and the transcription
             // still in flight would then drop its text without a trace.
             showToast?("Still transcribing — one moment", .info)
             return
-        case .idle, .failed:
+        case .idle:
             break
         }
 
         activationID += 1
         let activation = activationID
         isSavingRecording = saveRecording
+        phase = .starting
 
         Task { @MainActor in
+            // Each await below can outlast a cancel (Esc, a second press, a
+            // push-to-talk release); a superseded start must neither record
+            // nor report a failure the user no longer cares about.
             guard await DictationRecorder.requestMicrophoneAccess() else {
+                guard activation == self.activationID else { return }
                 self.fail(with: .microphonePermissionDenied)
                 return
             }
@@ -199,10 +226,11 @@ final class DictationController: ObservableObject {
             // runs entirely in-process and needs nothing beyond the microphone.
             if self.preferredEngine == .appleOnDevice,
                await AppleSpeechTranscriber.requestSpeechAccess() == false {
+                guard activation == self.activationID else { return }
                 self.fail(with: .speechPermissionDenied)
                 return
             }
-            guard activation == self.activationID else { return }
+            guard activation == self.activationID, self.phase == .starting else { return }
 
             do {
                 try self.recorder.start()

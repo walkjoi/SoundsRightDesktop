@@ -12,7 +12,7 @@ struct DictationHUD: View {
                 recordingContent
             case .transcribing:
                 transcribingContent
-            case .idle, .failed:
+            case .idle, .starting:
                 EmptyView()
             }
         }
