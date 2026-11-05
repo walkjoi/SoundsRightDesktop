@@ -8,11 +8,11 @@ import os
 /// Deliberately not an `ObservableObject`: every playback property the UI renders
 /// comes from `AppState.ttsState`, so publishing from here would only add a second
 /// source of truth — and anything polled (play position) would need a timer that
-/// keeps the main run loop awake for the whole of every playback.
+/// keeps the main run loop awake for the whole of every playback. For the same
+/// reason it keeps no play/pause flag of its own: `ttsState` says whether
+/// audio is playing, and the `AVAudioPlayer` itself knows the rest.
 @MainActor
 final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
-    private(set) var isPlaying: Bool = false
-
     var onFinished: (() -> Void)?
     /// Called when the loaded audio cannot be decoded mid-playback. AVFoundation
     /// stops the player without a finish callback in that case, so without this
@@ -47,8 +47,6 @@ final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
         guard playSuccess else {
             throw AudioPlayerError.playbackFailed
         }
-
-        isPlaying = true
     }
 
     /// Applies a loop-mode change to the loaded player in place: enabling keeps
@@ -67,41 +65,22 @@ final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
 
     func pause() {
         player?.pause()
-        isPlaying = false
     }
 
     func resume() {
         guard let player = player, !player.isPlaying else { return }
-        if player.play() {
-            isPlaying = true
-        }
+        _ = player.play()
     }
 
     func stop() {
         player?.stop()
         player = nil
-        isPlaying = false
     }
 
     /// Stops playback and clears cached audio data so stale audio cannot be replayed.
     func reset() {
         stop()
         lastAudioData = nil
-    }
-
-    func togglePlayPause() {
-        if isPlaying {
-            pause()
-        } else if player != nil {
-            resume()
-        }
-    }
-
-    func replay() throws {
-        guard let audioData = lastAudioData else {
-            throw AudioPlayerError.noAudioDataToReplay
-        }
-        try play(data: audioData)
     }
 
     // MARK: - AVAudioPlayerDelegate
@@ -115,7 +94,6 @@ final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
         let key = ObjectIdentifier(player)
         Task { @MainActor in
             guard self.isCurrent(key) else { return }
-            self.isPlaying = false
             self.onFinished?()
         }
     }
@@ -125,7 +103,6 @@ final class AudioPlayer: NSObject, AVAudioPlayerDelegate {
         let message = error?.localizedDescription
         Task { @MainActor in
             guard self.isCurrent(key) else { return }
-            self.isPlaying = false
             self.logger.error("Audio decoding error: \(message ?? "unknown")")
             self.onFailed?(message)
         }
