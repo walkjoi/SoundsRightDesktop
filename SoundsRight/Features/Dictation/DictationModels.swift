@@ -149,6 +149,50 @@ enum WhisperModelStatus: Equatable {
     }
 }
 
+/// Why a clip meant for Whisper was transcribed by the built-in engine.
+///
+/// `DictationManager` records it at the moment it falls back, so the toast
+/// names the reason that applied then. Reading the model status at delivery
+/// instead would misreport a download that finished while the built-in
+/// engine was working.
+enum WhisperFallback: Sendable, Equatable {
+    /// The model is still downloading, or its download has not started yet.
+    case modelDownloading
+    /// The model is on disk and still loading.
+    case modelLoading
+    /// The model failed to download or load. Settings offers Retry.
+    case modelUnavailable
+    /// The model was loaded but failed on this clip.
+    case transcriptionFailed
+
+    /// Why a model that is not ready could not take the clip.
+    init(modelStatus: WhisperModelStatus) {
+        switch modelStatus {
+        case .loading:
+            self = .modelLoading
+        case .failed:
+            self = .modelUnavailable
+        case .notDownloaded, .downloading, .ready:
+            // A status still reading `.ready` belongs to a model being
+            // switched away from; the new build is about to download.
+            self = .modelDownloading
+        }
+    }
+
+    var toastMessage: String {
+        switch self {
+        case .modelDownloading:
+            return "Used the built-in engine: Whisper model still downloading"
+        case .modelLoading:
+            return "Used the built-in engine: Whisper model still loading"
+        case .modelUnavailable:
+            return "Used the built-in engine: Whisper model unavailable, retry in Settings"
+        case .transcriptionFailed:
+            return "Used the built-in engine: Whisper couldn't transcribe that"
+        }
+    }
+}
+
 /// Lifecycle of one dictation, as the HUD presents it.
 ///
 /// Failures are not a phase: a failed activation returns to `.idle` and is
@@ -187,6 +231,9 @@ struct DictationTranscript: Sendable {
     let audioDuration: TimeInterval
     /// Wall-clock time from "user stopped talking" to "text ready".
     let processingDuration: TimeInterval
+    /// Why the built-in engine produced this although Whisper was preferred;
+    /// nil when the preferred engine did.
+    var whisperFallback: WhisperFallback? = nil
 }
 
 /// Everything that can go wrong between the hotkey and the inserted text.

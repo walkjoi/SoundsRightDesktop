@@ -313,8 +313,8 @@ final class DictationController: ObservableObject {
 
         switch TextInserter.insert(transcript.text) {
         case .pasted:
-            if transcript.engine == .appleOnDevice, preferredEngine == .whisper {
-                showToast?("Used the built-in engine — Whisper model still downloading", .notice)
+            if let fallback = transcript.whisperFallback {
+                showToast?(fallback.toastMessage, .notice)
             }
         case .copiedOnly:
             showToast?("Copied to the clipboard — press ⌘V to paste", .notice)

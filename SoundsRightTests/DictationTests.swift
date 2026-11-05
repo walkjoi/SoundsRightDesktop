@@ -150,6 +150,27 @@ final class DictationLanguageTests: XCTestCase {
     }
 }
 
+// MARK: - Engine Fallback
+
+final class WhisperFallbackTests: XCTestCase {
+
+    /// The reason recorded when a clip goes to the built-in engine decides the
+    /// toast, so a failed model must never read as one still downloading.
+    func testModelStatusNamesWhyWhisperCouldNotTakeTheClip() {
+        XCTAssertEqual(WhisperFallback(modelStatus: .notDownloaded), .modelDownloading)
+        XCTAssertEqual(WhisperFallback(modelStatus: .downloading(fractionCompleted: 0.4)), .modelDownloading)
+        XCTAssertEqual(WhisperFallback(modelStatus: .loading), .modelLoading)
+        XCTAssertEqual(WhisperFallback(modelStatus: .failed("offline")), .modelUnavailable)
+        // A status still reading .ready belongs to a model being switched away from.
+        XCTAssertEqual(WhisperFallback(modelStatus: .ready), .modelDownloading)
+    }
+
+    func testEachReasonHasItsOwnToast() {
+        let reasons: [WhisperFallback] = [.modelDownloading, .modelLoading, .modelUnavailable, .transcriptionFailed]
+        XCTAssertEqual(Set(reasons.map(\.toastMessage)).count, reasons.count)
+    }
+}
+
 // MARK: - Audio
 
 final class DictationAudioTests: XCTestCase {

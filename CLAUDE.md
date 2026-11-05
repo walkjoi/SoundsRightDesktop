@@ -78,6 +78,8 @@ Either path feeds TTS synthesis -> audio playback. Results can be saved to Colle
 1. **WhisperKit** — Whisper large-v3-turbo via Core ML, downloaded from `argmaxinc/whisperkit-coreml` on first use (632 MB default). The only engine that keeps English words intact inside a Chinese sentence.
 2. **AppleSpeechTranscriber** — `SpeechAnalyzer`/`SpeechTranscriber` on macOS 26+, `SFSpeechRecognizer` below. No download, so it transcribes clips recorded while the Whisper model is still installing, and catches any Whisper failure.
 
+A clip that falls back carries the reason on its transcript (`WhisperFallback`: downloading, loading, unavailable, or a failed transcription), recorded when the manager falls back, so the toast names the cause that applied then. The warmup slot (`whisperWarmupTask`) clears when an attempt ends, success or failure, so Settings → Retry and later warmups can try again; clips themselves do not retry a failed model, so one that can never load is not reloaded on every dictation.
+
 Clips are rejected before either engine sees them when they fall under `dictationMinDuration` or `dictationSilencePeakThreshold` — Whisper invents a fluent sentence out of room tone.
 
 **Only two languages exist here (Mandarin and English), and both engines exploit that:**
